@@ -1,0 +1,592 @@
+"use client"
+
+import { useState, useEffect } from "react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
+import { toast } from "sonner"
+import { logger } from "@/lib/logger"
+import { useSolana } from "@/hooks/use-solana"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { AlertCircle, ImageIcon, Loader2 } from "lucide-react"
+import { logActivity } from "@/lib/supabase/logging"
+import { useAuth } from "@/components/providers/auth-provider"
+import { useRouter } from "next/navigation"
+import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, getAccount, createTransferInstruction, getOrCreateAssociatedTokenAccount } from "@solana/spl-token"
+import { PublicKey, Transaction } from "@solana/web3.js"
+import { signInWithWallet } from "@/lib/auth/wallet"
+import { signAndSendTransaction } from "@/lib/solana/transaction"
+import { BN } from "@project-serum/anchor"
+
+interface FormData {
+  name: string
+  description: string
+  tokenSymbol: string
+  twitter: string
+  telegram: string
+  discord: string
+  swarmsAmount: string
+  image?: File
+}
+
+const initialFormData: FormData = {
+  name: "",
+  description: "",
+  tokenSymbol: "",
+  twitter: "",
+  telegram: "",
+  discord: "",
+  swarmsAmount: "10"
+}
+
+interface FormError {
+  message: string
+  fields?: Record<string, string>
+}
+
+const SWARMS_TOKEN_ADDRESS = process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS as string
+const SWARMS_PUMP_ADDRESS = process.env.NEXT_PUBLIC_SWARMS_PLATFORM_TEST_ADDRESS as string
+const SWARMS_MINIMUM_BUY_IN = 1
+export default function CreateAgent() {
+  const router = useRouter()
+  const { user, loading: authLoading } = useAuth()
+  const { connection } = useSolana()
+  const [isLoading, setIsLoading] = useState(false)
+  const [formData, setFormData] = useState<FormData>(initialFormData)
+  const [error, setError] = useState<FormError | null>(null)
+  const [mounted, setMounted] = useState(false)
+  const [imagePreview, setImagePreview] = useState<string | null>(null)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  // Check auth state and redirect if needed
+  useEffect(() => {
+    if (!mounted || authLoading) return
+
+    // If auth is loaded and no user, redirect
+    if (!user) {
+      router.replace('/')
+      toast.error("Please connect your wallet to create an agent")
+    }
+  }, [mounted, authLoading, user, router])
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }))
+    // Clear field-specific error when user starts typing
+    if (error?.fields?.[name]) {
+      setError((prev) =>
+        prev
+          ? {
+              ...prev,
+              fields: {
+                ...prev.fields,
+                [name]: "",
+              },
+            }
+          : null,
+      )
+    }
+  }
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        setError(prev => ({
+          message: "Invalid file type",
+          fields: { ...prev?.fields, image: "Please upload an image file" }
+        }))
+        return
+      }
+      // Validate file size (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        setError(prev => ({
+          message: "File too large",
+          fields: { ...prev?.fields, image: "Image must be less than 5MB" }
+        }))
+        return
+      }
+
+      // Create preview URL
+      const previewUrl = URL.createObjectURL(file)
+      setImagePreview(previewUrl)
+      
+      setFormData(prev => ({ ...prev, image: file }))
+      // Clear error if exists
+      if (error?.fields?.image) {
+        setError(prev => prev ? {
+          ...prev,
+          fields: { ...prev.fields, image: "" }
+        } : null)
+      }
+    }
+  }
+
+  const validateForm = (): boolean => {
+    const errors: Record<string, string> = {}
+
+    if (!formData.name.trim()) {
+      errors.name = "Name is required"
+    }
+
+    if (!formData.description.trim()) {
+      errors.description = "Description is required"
+    }
+
+    if (!formData.tokenSymbol.trim()) {
+      errors.tokenSymbol = "Token symbol is required"
+    } else if (!/^[A-Z0-9]{2,10}$/.test(formData.tokenSymbol)) {
+      errors.tokenSymbol = "Token symbol must be 2-10 uppercase letters/numbers"
+    }
+
+    if (!formData.image) {
+      errors.image = "Agent image is required"
+    }
+
+    const swarmsAmount = Number.parseInt(formData.swarmsAmount)
+    if (isNaN(swarmsAmount) || swarmsAmount < SWARMS_MINIMUM_BUY_IN) {
+      errors.swarmsAmount = `Minimum ${SWARMS_MINIMUM_BUY_IN.toLocaleString()} SWARMS required`
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setError({ message: "Please fix the following errors:", fields: errors })
+      return false
+    }
+
+    return true
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+
+    if (!mounted || !connection) {
+      setError({ message: "Please wait for connection to initialize" })
+      return
+    }
+
+    if (!user?.user_metadata?.wallet_address) {
+      toast.error("Please connect your wallet first")
+      return
+    }
+
+    const walletAddress = user.user_metadata.wallet_address
+
+    // @ts-ignore - Phantom wallet type
+    const provider = window?.phantom?.solana
+    // Check if provider exists and is connected
+    if (!provider) {
+      toast.error("Please install Phantom wallet")
+      return
+    }
+
+    // Try to reconnect wallet if needed
+    if (!provider.isConnected || provider.publicKey?.toString() !== walletAddress) {
+      try {
+        // First try to reconnect the wallet
+        await provider.connect()
+        
+        // If wallet address doesn't match session, we need to sign in again
+        if (provider.publicKey?.toString() !== walletAddress) {
+          toast.loading("Session expired. Please sign in again...")
+          const success = await signInWithWallet(provider.publicKey)
+          if (!success) {
+            toast.error("Failed to sign in with wallet")
+            return
+          }
+          toast.success("Successfully reconnected wallet")
+        }
+      } catch (error) {
+        toast.error("Failed to reconnect wallet. Please try connecting manually.")
+        return
+      }
+    }
+
+    if (!validateForm()) {
+      return
+    }
+
+    const toastId = toast.loading("Creating token...")
+
+    try {
+      setIsLoading(true)
+      logger.info("Starting token creation process", {
+        name: formData.name,
+        symbol: formData.tokenSymbol,
+        wallet: walletAddress
+      })
+
+      const swarmsAmount = Number.parseInt(formData.swarmsAmount)
+      console.log("Raw provider public key:", provider.publicKey)
+      console.log("Provider public key toString():", provider.publicKey.toString())
+      console.log("Provider public key toBase58():", provider.publicKey.toBase58())
+      
+      // Check balances through our API
+      const balanceResponse = await fetch('/api/solana/check-balance', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          walletAddress: provider.publicKey.toString()
+        })
+      })
+
+      if (!balanceResponse.ok) {
+        const error = await balanceResponse.json()
+        throw new Error(error.error || 'Failed to check balances')
+      }
+
+      const { sol, swarms, tokenAccount } = await balanceResponse.json()
+      console.log("Balances:", { sol, swarms })
+
+      // Verify minimum SOL
+      if (sol < 0.05) {
+        throw new Error(`Insufficient SOL balance. You need at least 0.05 SOL (current: ${sol.toFixed(4)} SOL)`)
+      }
+
+      // Verify SWARMS balance
+      if (!swarms || swarms < swarmsAmount) {
+        throw new Error(`Insufficient SWARMS balance. You need ${swarmsAmount} SWARMS (current: ${swarms || 0} SWARMS)`)
+      }
+
+      // Proceed with token creation
+      toast.loading("Creating your AI agent token...", { id: toastId })
+      
+      // Call the mint-token API with form data and image
+      const mintFormData = new FormData()
+      mintFormData.append('image', formData.image!)
+      mintFormData.append('data', JSON.stringify({
+        userPublicKey: provider.publicKey.toString(),
+        tokenName: formData.name,
+        tickerSymbol: formData.tokenSymbol,
+        description: formData.description,
+        twitterHandle: formData.twitter || null,
+        telegramGroup: formData.telegram || null,
+        discordServer: formData.discord || null,
+        swarmsAmount,
+        userTokenAccount: tokenAccount // Pass the user's SWARMS token account
+      }))
+
+      logger.info("Calling mint-token API")
+      const response = await fetch('/api/solana/mint-token', {
+        method: 'POST',
+        body: mintFormData
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to create token')
+      }
+
+      const { transaction, tokenMint, bondingCurve, imageUrl } = await response.json()
+      
+      try {
+        toast.loading("Please confirm the transaction in your wallet...", { id: toastId })
+        
+        // Deserialize and sign the transaction
+        const tx = Transaction.from(Buffer.from(transaction, 'base64'))
+        
+        // Sign with user wallet
+        const signedTx = await provider.signTransaction(tx)
+        const serializedTx = signedTx.serialize().toString('base64')
+
+        // Send signed transaction through our API
+        const updateResponse = await fetch('/api/solana/mint-token', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            signedTransaction: serializedTx,
+            tokenMint,
+            bondingCurve,
+            userPublicKey: provider.publicKey.toString(),
+            tokenName: formData.name,
+            tickerSymbol: formData.tokenSymbol,
+            description: formData.description,
+            twitterHandle: formData.twitter || null,
+            telegramGroup: formData.telegram || null,
+            discordServer: formData.discord || null,
+            swarmsAmount,
+            imageUrl
+          })
+        })
+
+        if (!updateResponse.ok) {
+          const error = await updateResponse.json()
+          throw new Error(error.error || 'Failed to process transaction')
+        }
+
+        const { signature } = await updateResponse.json()
+
+        logger.info("Token creation completed", {
+          signature,
+          mint: tokenMint,
+          bondingCurve,
+          swarmsAmount
+        })
+
+        toast.success("Token created successfully!", {
+          id: toastId,
+          description: (
+            <div className="mt-2 text-xs font-mono break-all">
+              <div>Mint: {tokenMint}</div>
+              <div>Bonding Curve: {bondingCurve}</div>
+              <div>SWARMS Paid: {swarmsAmount.toLocaleString()}</div>
+              <div>
+                <a
+                  href={`https://explorer.solana.com/tx/${signature}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-500 hover:text-blue-600"
+                >
+                  View on Explorer
+                </a>
+              </div>
+            </div>
+          ),
+        })
+
+        // Reset form and redirect to the agent page
+        setFormData(initialFormData)
+        setImagePreview(null)
+        router.push(`/agent/${tokenMint}`)
+
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('User rejected')) {
+          toast.error("Transaction was rejected by user", { id: toastId })
+        } else {
+          toast.error("Failed to create token", { id: toastId })
+          logger.error("Token creation failed", error as Error)
+        }
+        throw error
+      }
+
+    } catch (error) {
+      logger.error("Token creation failed", error as Error)
+      
+      // Log failed activity
+      if (user?.user_metadata?.wallet_address) {
+        await logActivity({
+          category: "token",
+          level: "error",
+          action: "token_creation_failed",
+          details: {
+            name: formData.name,
+            symbol: formData.tokenSymbol,
+            error: error instanceof Error ? error.message : "Unknown error"
+          },
+          error_message: error instanceof Error ? error.message : "Unknown error",
+          wallet_address: user.user_metadata.wallet_address
+        })
+      }
+
+      toast.error(error instanceof Error ? error.message : "Failed to create token", { id: toastId })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Don't render until auth is loaded and we have a user
+  if (!mounted || authLoading) return null
+  if (!user) return null
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-8">
+      <div>
+        <h1 className="text-4xl font-bold text-red-600">Create AI Agent</h1>
+        <p className="text-gray-400 mt-2">Launch your own AI agent with Swarms token backing</p>
+        <div className="mt-4 p-4 bg-black/20 rounded-lg border border-red-500/20">
+          <h3 className="text-sm font-semibold text-red-500">Requirements</h3>
+          <ul className="mt-2 text-sm text-gray-400 space-y-1">
+            <li>• Minimum {SWARMS_MINIMUM_BUY_IN.toLocaleString()} SWARMS tokens required</li>
+            <li>• Minimum 0.05 SOL for transaction fees</li>
+            <li>• Connected Phantom wallet</li>
+          </ul>
+          <p className="mt-4 text-sm text-gray-400">
+            Your token allocation will be determined by the amount of SWARMS tokens you provide and our bonding curve formula.
+            The more SWARMS you provide, the more tokens you'll receive from the 1 billion total supply.
+          </p>
+        </div>
+      </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>
+            {error.message}
+            {error.fields && (
+              <ul className="mt-2 list-disc list-inside">
+                {Object.entries(error.fields).map(
+                  ([field, message]) =>
+                    message && (
+                      <li key={field} className="text-sm">
+                        {message}
+                      </li>
+                    ),
+                )}
+              </ul>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <div className="space-y-2">
+          <Label htmlFor="image">Agent Image *</Label>
+          <div className="flex items-center gap-4">
+            <div className="relative w-32 h-32 border-2 border-dashed border-red-600/20 rounded-lg overflow-hidden">
+              {imagePreview ? (
+                <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <ImageIcon className="w-8 h-8 text-gray-400" />
+                </div>
+              )}
+              <input
+                type="file"
+                id="image"
+                accept="image/*"
+                onChange={handleImageChange}
+                className="absolute inset-0 opacity-0 cursor-pointer"
+              />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm text-gray-400">Upload your agent's image (max 5MB)</p>
+              {error?.fields?.image && (
+                <p className="text-sm text-red-500 mt-1">{error.fields.image}</p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="name">Agent Name *</Label>
+          <Input
+            id="name"
+            name="name"
+            value={formData.name}
+            onChange={handleChange}
+            placeholder="CyberMind"
+            required
+            className={`bg-black/50 border-red-600/20 focus:border-red-600 ${
+              error?.fields?.name ? "border-red-500" : ""
+            }`}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="description">Description *</Label>
+          <Textarea
+            id="description"
+            name="description"
+            value={formData.description}
+            onChange={handleChange}
+            placeholder="Describe your AI agent..."
+            required
+            className={`bg-black/50 border-red-600/20 focus:border-red-600 min-h-[100px] ${
+              error?.fields?.description ? "border-red-500" : ""
+            }`}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="tokenSymbol">Token Symbol *</Label>
+          <Input
+            id="tokenSymbol"
+            name="tokenSymbol"
+            value={formData.tokenSymbol}
+            onChange={handleChange}
+            placeholder="CMIND"
+            required
+            className={`bg-black/50 border-red-600/20 focus:border-red-600 ${
+              error?.fields?.tokenSymbol ? "border-red-500" : ""
+            }`}
+          />
+          <p className="text-xs text-gray-400">2-10 characters, uppercase letters and numbers only</p>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="swarmsAmount">SWARMS Token Amount *</Label>
+          <Input
+            id="swarmsAmount"
+            name="swarmsAmount"
+            type="number"
+            min={SWARMS_MINIMUM_BUY_IN}
+            value={formData.swarmsAmount}
+            onChange={handleChange}
+            required
+            className={`bg-black/50 border-red-600/20 focus:border-red-600 ${
+              error?.fields?.swarmsAmount ? "border-red-500" : ""
+            }`}
+          />
+          <p className="text-xs text-gray-400">Amount of SWARMS tokens you'll pay to create your agent</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-2">
+            <Label htmlFor="twitter">Twitter Handle</Label>
+            <Input
+              id="twitter"
+              name="twitter"
+              value={formData.twitter}
+              onChange={handleChange}
+              placeholder="@handle"
+              className="bg-black/50 border-red-600/20 focus:border-red-600"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="telegram">Telegram Group</Label>
+            <Input
+              id="telegram"
+              name="telegram"
+              value={formData.telegram}
+              onChange={handleChange}
+              placeholder="group_name"
+              className="bg-black/50 border-red-600/20 focus:border-red-600"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="discord">Discord Server</Label>
+          <Input
+            id="discord"
+            name="discord"
+            value={formData.discord}
+            onChange={handleChange}
+            placeholder="discord.gg/..."
+            className="bg-black/50 border-red-600/20 focus:border-red-600"
+          />
+        </div>
+
+        <Button
+          type="submit"
+          disabled={isLoading || !connection}
+          className="w-full bg-red-600 hover:bg-red-700 text-white"
+        >
+          {isLoading ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Creating...
+            </>
+          ) : (
+            "Create Agent"
+          )}
+        </Button>
+      </form>
+    </div>
+  )
+}
+

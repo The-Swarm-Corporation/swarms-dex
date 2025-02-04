@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 0 0% 0%;
+  --foreground: 0 0% 100%;
+  --card: 0 0% 0%;
+  --card-foreground: 0 0% 100%;
+  --popover: 0 0% 0%;
+  --popover-foreground: 0 0% 100%;
+  --primary: 0 72% 51%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 72% 51%;
+  --secondary-foreground: 0 0% 100%;
+  --muted: 0 0% 20%;
+  --muted-foreground: 0 0% 60%;
+  --accent: 0 72% 51%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 72% 51%;
+  --input: 0 0% 20%;
+  --ring: 0 72% 51%;
+  --radius: 0.5rem;
+}
+
+body {
+  background: radial-gradient(circle at center, #1a0000 0%, #000000 100%);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+.wallet-button {
+  background: #dc2626 !important;
+  color: white !important;
+  border: none !important;
+  padding: 0.5rem 1rem !important;
+  border-radius: 0.5rem !important;
+  font-weight: 600 !important;
+  height: 40px !important;
+  line-height: 1 !important;
+  min-width: 140px !important;
+  transition: all 0.2s ease-in-out !important;
+}
+
+.wallet-button:hover {
+  background: #b91c1c !important;
+  transform: translateY(-1px) !important;
+}
+
+.wallet-button[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Enhanced scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(220, 38, 38, 0.1);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(220, 38, 38, 0.5);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(220, 38, 38, 0.7);
+}
+
