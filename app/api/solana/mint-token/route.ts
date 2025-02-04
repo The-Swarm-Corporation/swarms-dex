@@ -1,4 +1,4 @@
-import { Connection, PublicKey, LAMPORTS_PER_SOL, Transaction, SystemProgram, Keypair, TransactionInstruction } from "@solana/web3.js";
+import { Connection, PublicKey, LAMPORTS_PER_SOL, Transaction, SystemProgram, Keypair, TransactionInstruction, SYSVAR_RENT_PUBKEY, SYSVAR_INSTRUCTIONS_PUBKEY } from "@solana/web3.js";
 import { createClient } from "@supabase/supabase-js";
 import { createTokenAndMint } from "@/lib/solana/token";
 import { logger } from "@/lib/logger";
@@ -14,6 +14,11 @@ import {
   AuthorityType
 } from "@solana/spl-token";
 import { PinataSDK } from 'pinata-web3';
+import { generateSigner, percentAmount, publicKey, transactionBuilder, keypairIdentity } from '@metaplex-foundation/umi';
+import { createV1, TokenStandard, MPL_TOKEN_METADATA_PROGRAM_ID } from '@metaplex-foundation/mpl-token-metadata';
+import { createUmi } from '@metaplex-foundation/umi-bundle-defaults';
+import { fromWeb3JsInstruction, fromWeb3JsKeypair, fromWeb3JsPublicKey, toWeb3JsInstruction } from '@metaplex-foundation/umi-web3js-adapters';
+import { mplTokenMetadata } from '@metaplex-foundation/mpl-token-metadata';
 
 // Debug prints for environment variables
 console.log('ENV CHECK:');
@@ -125,45 +130,6 @@ export async function POST(req: Request) {
     const imageUrl = `https://${PINATA_GATEWAY}/ipfs/${imageUpload.IpfsHash}`;
     logger.info('Image upload successful:', imageUpload.IpfsHash);
 
-    // Create and upload token metadata
-    const metadata = {
-      name: tokenName,
-      symbol: tickerSymbol,
-      description,
-      image: imageUrl,
-      external_url: "", // Can be updated later
-      attributes: [
-        {
-          trait_type: "Twitter",
-          value: twitterHandle || ""
-        },
-        {
-          trait_type: "Telegram",
-          value: telegramGroup || ""
-        },
-        {
-          trait_type: "Discord",
-          value: discordServer || ""
-        }
-      ],
-      properties: {
-        files: [
-          {
-            uri: imageUrl,
-            type: "image/png"
-          }
-        ],
-        category: "token",
-        creators: []
-      }
-    };
-
-    // Upload metadata to IPFS
-    logger.info('Uploading token metadata to Pinata');
-    const metadataUpload = await pinata.upload.json(metadata);
-    const metadataUrl = `https://${PINATA_GATEWAY}/ipfs/${metadataUpload.IpfsHash}`;
-    logger.info('Metadata upload successful:', metadataUpload.IpfsHash);
-
     const connection = new Connection(RPC_URL, "confirmed");
     const userPubkey = new PublicKey(userPublicKey);
 
@@ -272,13 +238,60 @@ export async function POST(req: Request) {
       )
     );
 
-    // 8. Transfer mint authority to pump
+    // 8. Create metadata (while we still have mint authority)
+    console.log('Adding metadata instruction...');
+    const umi = createUmi(RPC_URL)
+      .use(mplTokenMetadata());
+    
+    // Create a signer from mint keypair
+    const mintUmiKeypair = generateSigner(umi);
+    mintUmiKeypair.publicKey = publicKey(mintKeypair.publicKey.toBase58());
+    umi.use(keypairIdentity(mintUmiKeypair));
+
+    // Create metadata instruction
+    const metadataBuilder = createV1(umi, {
+      // Required accounts
+      mint: publicKey(mintKeypair.publicKey.toBase58()),
+      authority: mintUmiKeypair,  // Must match mint authority
+      payer: publicKey(userPublicKey),
+      updateAuthority: publicKey(userPublicKey),  // User can still update metadata later
+      systemProgram: publicKey(SystemProgram.programId.toBase58()),
+      sysvarInstructions: publicKey(SYSVAR_INSTRUCTIONS_PUBKEY.toBase58()),
+      splTokenProgram: publicKey(TOKEN_PROGRAM_ID.toBase58()),
+      // Required data
+      name: tokenName,
+      symbol: tickerSymbol,
+      uri: imageUrl,
+      sellerFeeBasisPoints: percentAmount(0),
+      creators: [{
+        address: publicKey(userPublicKey),
+        verified: false,  // Don't need signature since unverified
+        share: 100,
+      }],
+      primarySaleHappened: false,
+      isMutable: true,
+      tokenStandard: TokenStandard.Fungible,
+      collection: null,
+      uses: null,
+      collectionDetails: null,
+      ruleSet: null,
+      decimals: TOKEN_DECIMALS,
+      printSupply: null,
+    });
+
+    // Add metadata instruction to transaction
+    const metadataInstructions = metadataBuilder.getInstructions();
+    metadataInstructions.forEach(ix => {
+      transaction.add(toWeb3JsInstruction(ix));
+    });
+
+    // 9. Finally, transfer mint authority to null (no one)
     transaction.add(
       createSetAuthorityInstruction(
         mintKeypair.publicKey,       // Mint account
         mintKeypair.publicKey,       // Current authority
         AuthorityType.MintTokens,    // Authority type
-        SWARMS_PUMP_ADDRESS          // New authority
+        null                         // New authority (null means no one)
       )
     );
 
@@ -288,7 +301,7 @@ export async function POST(req: Request) {
     transaction.lastValidBlockHeight = lastValidBlockHeight;
     transaction.feePayer = userPubkey;
 
-    // Sign with mint keypair
+    // Partial sign with mint keypair
     transaction.partialSign(mintKeypair);
 
     // Serialize transaction
@@ -314,7 +327,7 @@ export async function POST(req: Request) {
       bondingCurveToken: bondingCurveTokenAccount.toString(),
       bondingCurveReserve: bondingCurveReserve.toString(),
       imageUrl,
-      metadataUrl
+      metadataUrl: ""
     }), { status: 200 });
 
   } catch (error) {
@@ -323,12 +336,12 @@ export async function POST(req: Request) {
   }
 }
 
-// Handle signed transaction and database update
+// Handle signed transaction and update database
 export async function PUT(req: Request) {
   try {
     const { 
       signedTransaction,
-      tokenMint, 
+      tokenMint,
       bondingCurveToken,
       bondingCurveReserve,
       userPublicKey,
@@ -348,22 +361,14 @@ export async function PUT(req: Request) {
       confirmTransactionInitialTimeout: 60000 // 60 seconds
     });
 
-    // 1. First send and confirm transaction
-    console.log('Sending transaction to RPC...');
+    // Send the transaction
+    console.log('Sending transaction...');
     const transaction = Transaction.from(Buffer.from(signedTransaction, 'base64'));
-    
-    console.log('Transaction signatures:', {
-      signers: transaction.signatures.map(s => s.publicKey.toString()),
-      hasAllSignatures: transaction.signatures.every(s => s.signature !== null)
-    });
-
-    // Send the transaction as-is, don't modify after signatures
     const signature = await connection.sendRawTransaction(transaction.serialize());
     console.log('Transaction sent:', signature);
 
     // Wait for confirmation
     const confirmation = await connection.confirmTransaction(signature, 'confirmed');
-
     if (confirmation.value.err) {
       throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
     }
@@ -397,7 +402,7 @@ export async function PUT(req: Request) {
         image: imageUrl
       }
     });
-    
+
     return new Response(JSON.stringify({ 
       success: true,
       signature,
@@ -407,8 +412,8 @@ export async function PUT(req: Request) {
     }), { status: 200 });
 
   } catch (error) {
-    console.error('Error processing signed transaction:', error);
-    logger.error("Error processing signed transaction", error as Error);
+    console.error('Error processing transaction:', error);
+    logger.error("Error processing transaction", error as Error);
     return new Response(JSON.stringify({ 
       error: error instanceof Error ? error.message : "Failed to process transaction" 
     }), { status: 500 });
