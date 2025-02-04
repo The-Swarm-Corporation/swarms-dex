@@ -10,7 +10,7 @@ import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 
 export const BONDING_CURVE_PROGRAM_ID = new PublicKey(
   // TODO: Deploy program and replace with actual program ID
-  "BCurvxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  "4FMjtSYTXVXnDkTT7tVJftdcc9NfDpg8norUacg7ncCo"
 );
 
 // PDA seed constants

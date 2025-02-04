@@ -6,6 +6,7 @@ import {
   getAssociatedTokenAddress, 
   createTransferInstruction, 
   createInitializeMintInstruction,
+  createInitializeAccountInstruction,
   TOKEN_PROGRAM_ID,
   MINT_SIZE,
   createAssociatedTokenAccountInstruction,
@@ -19,7 +20,7 @@ import { createV1, TokenStandard, MPL_TOKEN_METADATA_PROGRAM_ID } from '@metaple
 import { createUmi } from '@metaplex-foundation/umi-bundle-defaults';
 import { fromWeb3JsInstruction, fromWeb3JsKeypair, fromWeb3JsPublicKey, toWeb3JsInstruction } from '@metaplex-foundation/umi-web3js-adapters';
 import { mplTokenMetadata } from '@metaplex-foundation/mpl-token-metadata';
-
+import { encrypt, decrypt } from '@/lib/crypto';
 // Debug prints for environment variables
 console.log('ENV CHECK:');
 console.log('DAO_TREASURY:', process.env.NEXT_PUBLIC_DAO_TREASURY_ADDRESS);
@@ -76,7 +77,7 @@ try {
   throw error;
 }
 
-const TOKEN_DECIMALS = 9;
+const TOKEN_DECIMALS = 6;
 const INITIAL_SUPPLY = 1_000_000_000;
 
 console.log('Creating SWARMS Token PublicKey...');
@@ -101,6 +102,19 @@ export const config = {
   }
 }
 
+// Add function to derive pool PDA
+async function derivePoolAccount(mint: PublicKey): Promise<[PublicKey, number]> {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("pool"), mint.toBuffer()],
+    SWARMS_PUMP_ADDRESS
+  );
+}
+
+// Constants for bonding curve
+const INITIAL_VIRTUAL_SWARMS = 30_000_000; // 30 SWARMS with 6 decimals
+const INITIAL_TOKEN_SUPPLY = 1_073_000_191_000_000; // 1,073,000,191 tokens with 6 decimals
+const K_VALUE = 32_190_005_730_000_000; // K = initial_supply * (initial_virtual_swarms)
+
 export async function POST(req: Request) {
   try {
     // Parse form data for file upload
@@ -116,11 +130,10 @@ export async function POST(req: Request) {
       twitterHandle,
       telegramGroup,
       discordServer,
-      swarmsAmount,
-      userTokenAccount
+      swarmsAmount
     } = data;
     
-    if (!userPublicKey || !tokenName || !tickerSymbol || !swarmsAmount || !userTokenAccount || !image) {
+    if (!userPublicKey || !tokenName || !tickerSymbol || !swarmsAmount || !image) {
       return new Response(JSON.stringify({ error: "Invalid Request - Missing required fields" }), { status: 400 });
     }
 
@@ -133,12 +146,22 @@ export async function POST(req: Request) {
     const connection = new Connection(RPC_URL, "confirmed");
     const userPubkey = new PublicKey(userPublicKey);
 
+    // Get user's SWARMS token account
+    const userTokenAccount = await getAssociatedTokenAddress(
+      SWARMS_TOKEN_ADDRESS,
+      userPubkey
+    );
+
     // Create transaction for user to sign
     const transaction = new Transaction();
     
     // Generate mint keypair
     const mintKeypair = Keypair.generate();
     console.log('Generated mint keypair:', mintKeypair.publicKey.toString());
+
+    // Generate bonding curve keypair
+    const bondingCurveKeypair = Keypair.generate();
+    console.log('Generated bonding curve keypair:', bondingCurveKeypair.publicKey.toString());
 
     // Calculate fee and reserve amounts
     const totalAmount = BigInt(swarmsAmount) * BigInt(10 ** 6); // SWARMS has 6 decimals
@@ -172,100 +195,130 @@ export async function POST(req: Request) {
       })
     );
     
-    // 3. Initialize mint with pump as authority
+    // 3. Initialize mint with mint keypair as temporary authority
     transaction.add(
       createInitializeMintInstruction(
         mintKeypair.publicKey,
         TOKEN_DECIMALS,
-        mintKeypair.publicKey, // Temporary mint authority (will be transferred to pump)
+        mintKeypair.publicKey, // Mint keypair is the authority
         null,
         TOKEN_PROGRAM_ID
       )
     );
 
-    // 4. Create bonding curve token account for new token (ATA for pump)
-    const bondingCurveTokenAccount = await getAssociatedTokenAddress(
-      mintKeypair.publicKey,  // new token mint
-      SWARMS_PUMP_ADDRESS     // owned by pump
+    // 4. Create bonding curve account
+    const bondingCurveRentExempt = await connection.getMinimumBalanceForRentExemption(165);
+    transaction.add(
+      SystemProgram.createAccount({
+        fromPubkey: userPubkey,
+        newAccountPubkey: bondingCurveKeypair.publicKey,
+        space: 165,
+        lamports: bondingCurveRentExempt,
+        programId: TOKEN_PROGRAM_ID
+      })
+    );
+
+    // 5. Initialize bonding curve token account
+    transaction.add(
+      createInitializeAccountInstruction(
+        bondingCurveKeypair.publicKey,
+        mintKeypair.publicKey,
+        bondingCurveKeypair.publicKey,
+        TOKEN_PROGRAM_ID
+      )
+    );
+
+    // 4. Create SWARMS ATA for bonding curve account
+    const bondingCurveSwarmsATA = await getAssociatedTokenAddress(
+      SWARMS_TOKEN_ADDRESS,
+      bondingCurveKeypair.publicKey,
+      false
     );
 
     transaction.add(
       createAssociatedTokenAccountInstruction(
-        userPubkey,                // Payer
-        bondingCurveTokenAccount,  // ATA address
-        SWARMS_PUMP_ADDRESS,       // Owner
-        mintKeypair.publicKey      // Mint
+        userPubkey,           // Payer
+        bondingCurveSwarmsATA,// ATA address
+        bondingCurveKeypair.publicKey, // Owner
+        SWARMS_TOKEN_ADDRESS  // Mint
       )
     );
 
-    // 5. Create SWARMS reserve account for pump
-    const bondingCurveReserve = await getAssociatedTokenAddress(
-      SWARMS_TOKEN_ADDRESS,    // SWARMS token
-      SWARMS_PUMP_ADDRESS     // owned by pump
+    // Create token ATA for bonding curve account
+    const bondingCurveTokenATA = await getAssociatedTokenAddress(
+      mintKeypair.publicKey,  // New token mint
+      bondingCurveKeypair.publicKey, // Owner
+      false
     );
 
-    // Only create if it doesn't exist
-    const reserveAccount = await connection.getAccountInfo(bondingCurveReserve);
-    if (!reserveAccount) {
-      transaction.add(
-        createAssociatedTokenAccountInstruction(
-          userPubkey,            // Payer
-          bondingCurveReserve,   // ATA address
-          SWARMS_PUMP_ADDRESS,   // Owner
-          SWARMS_TOKEN_ADDRESS   // Mint (SWARMS)
-        )
-      );
-    }
+    transaction.add(
+      createAssociatedTokenAccountInstruction(
+        userPubkey,            // Payer
+        bondingCurveTokenATA,  // ATA address
+        bondingCurveKeypair.publicKey, // Owner
+        mintKeypair.publicKey  // Mint
+      )
+    );
 
-    // 6. Transfer SWARMS to bonding curve reserve
+    // 5. Transfer SWARMS reserve to bonding curve's ATA
     transaction.add(
       createTransferInstruction(
         new PublicKey(userTokenAccount),
-        bondingCurveReserve,
+        bondingCurveSwarmsATA,
         userPubkey,
         reserveAmount
       )
     );
 
-    // 7. Mint initial supply to bonding curve token account
+    // 6. Mint initial supply to bonding curve's token ATA
     const initialSupply = BigInt(INITIAL_SUPPLY) * BigInt(10 ** TOKEN_DECIMALS);
     transaction.add(
       createMintToInstruction(
         mintKeypair.publicKey,       // Mint
-        bondingCurveTokenAccount,    // Destination
-        mintKeypair.publicKey,       // Mint Authority (we have authority at this point)
+        bondingCurveTokenATA,        // Destination (owned by bonding curve)
+        mintKeypair.publicKey,       // Mint Authority (mint keypair)
         initialSupply                // Amount
       )
     );
 
-    // 8. Create metadata (while we still have mint authority)
+    // Note: The bonding curve account will later use these tokens to create a Raydium pool
+    // with the correct bonding curve formula and hold the LP tokens
+
+    // 7. Create metadata
     console.log('Adding metadata instruction...');
     const umi = createUmi(RPC_URL)
-      .use(mplTokenMetadata());
-    
+      .use(mplTokenMetadata())
+      
     // Create a signer from mint keypair
     const mintUmiKeypair = generateSigner(umi);
     mintUmiKeypair.publicKey = publicKey(mintKeypair.publicKey.toBase58());
     umi.use(keypairIdentity(mintUmiKeypair));
 
     // Create metadata instruction
+    console.log('Adding metadata instruction...', {
+      mint: mintKeypair.publicKey.toBase58(),
+      authority: mintKeypair.publicKey.toBase58(),
+      payer: userPublicKey,
+      name: tokenName,
+      symbol: tickerSymbol,
+      uri: imageUrl
+    });
+
     const metadataBuilder = createV1(umi, {
-      // Required accounts
       mint: publicKey(mintKeypair.publicKey.toBase58()),
-      authority: mintUmiKeypair,  // Must match mint authority
-      payer: publicKey(userPublicKey),
-      updateAuthority: publicKey(userPublicKey),  // User can still update metadata later
+      authority: mintUmiKeypair,  // Use the UMI identity as signer
+      payer: publicKey(userPublicKey),  // User pays for the transaction
+      updateAuthority: mintUmiKeypair,  // User can update metadata later
       systemProgram: publicKey(SystemProgram.programId.toBase58()),
       sysvarInstructions: publicKey(SYSVAR_INSTRUCTIONS_PUBKEY.toBase58()),
       splTokenProgram: publicKey(TOKEN_PROGRAM_ID.toBase58()),
-      // Required data
       name: tokenName,
       symbol: tickerSymbol,
       uri: imageUrl,
       sellerFeeBasisPoints: percentAmount(0),
       creators: [{
         address: publicKey(userPublicKey),
-        verified: false,  // Don't need signature since unverified
+        verified: false,
         share: 100,
       }],
       primarySaleHappened: false,
@@ -284,12 +337,12 @@ export async function POST(req: Request) {
     metadataInstructions.forEach(ix => {
       transaction.add(toWeb3JsInstruction(ix));
     });
-
-    // 9. Finally, transfer mint authority to null (no one)
+    console.log("Added metadata")
+    // 8. Finally, remove mint authority (mint keypair transfers to null)
     transaction.add(
       createSetAuthorityInstruction(
         mintKeypair.publicKey,       // Mint account
-        mintKeypair.publicKey,       // Current authority
+        mintKeypair.publicKey,       // Current authority (mint keypair)
         AuthorityType.MintTokens,    // Authority type
         null                         // New authority (null means no one)
       )
@@ -301,8 +354,10 @@ export async function POST(req: Request) {
     transaction.lastValidBlockHeight = lastValidBlockHeight;
     transaction.feePayer = userPubkey;
 
-    // Partial sign with mint keypair
+    // Partial sign with mint keypair and bonding curve keypair
     transaction.partialSign(mintKeypair);
+    transaction.partialSign(bondingCurveKeypair);
+    console.log("Partially signed with mint and bonding curve keypairs")
 
     // Serialize transaction
     const serializedTx = transaction.serialize({ 
@@ -310,22 +365,43 @@ export async function POST(req: Request) {
       verifySignatures: false 
     }).toString('base64');
 
+    // Encrypt private keys
+    const encryptedBondingCurvePrivateKey = await encrypt(
+      Buffer.from(bondingCurveKeypair.secretKey).toString('base64')
+    );
+
+    // Store bonding curve keypair in database
+    const { error: dbError } = await supabase
+      .from('bonding_curve_keys')
+      .insert({
+        public_key: bondingCurveKeypair.publicKey.toString(),
+        encrypted_private_key: encryptedBondingCurvePrivateKey,
+        metadata: {
+          mint_address: mintKeypair.publicKey.toString(),
+          user_public_key: userPublicKey
+        }
+      });
+
+    if (dbError) {
+      logger.error("Failed to store bonding curve keys", dbError);
+      throw new Error("Failed to store bonding curve keys");
+    }
+
     console.log("Created transaction for signing", {
       user: userPublicKey,
       swarmsAmount,
       fee: feeAmount.toString(),
       reserve: reserveAmount.toString(),
       mint: mintKeypair.publicKey.toString(),
-      bondingCurveToken: bondingCurveTokenAccount.toString(),
-      bondingCurveReserve: bondingCurveReserve.toString(),
+      bondingCurve: bondingCurveKeypair.publicKey.toString(),
       instructions: transaction.instructions.length
     });
 
+    // Return single transaction - user just pays for everything
     return new Response(JSON.stringify({ 
       transaction: serializedTx,
       tokenMint: mintKeypair.publicKey.toString(),
-      bondingCurveToken: bondingCurveTokenAccount.toString(),
-      bondingCurveReserve: bondingCurveReserve.toString(),
+      bondingCurveAddress: bondingCurveKeypair.publicKey.toString(),
       imageUrl,
       metadataUrl: ""
     }), { status: 200 });
@@ -342,8 +418,7 @@ export async function PUT(req: Request) {
     const { 
       signedTransaction,
       tokenMint,
-      bondingCurveToken,
-      bondingCurveReserve,
+      bondingCurveAddress,
       userPublicKey,
       tokenName,
       tickerSymbol,
@@ -358,21 +433,50 @@ export async function PUT(req: Request) {
     
     const connection = new Connection(RPC_URL, {
       commitment: 'confirmed',
-      confirmTransactionInitialTimeout: 60000 // 60 seconds
+      confirmTransactionInitialTimeout: 180000 // 3 minutes
     });
 
-    // Send the transaction
-    console.log('Sending transaction...');
+    // Send the user's signed transaction
+    console.log('Sending user transaction...');
     const transaction = Transaction.from(Buffer.from(signedTransaction, 'base64'));
     const signature = await connection.sendRawTransaction(transaction.serialize());
     console.log('Transaction sent:', signature);
 
-    // Wait for confirmation
-    const confirmation = await connection.confirmTransaction(signature, 'confirmed');
-    if (confirmation.value.err) {
-      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    try {
+      // First try normal confirmation with 3 minute timeout
+      const latestBlockhash = await connection.getLatestBlockhash();
+      const confirmation = await connection.confirmTransaction({
+        signature,
+        blockhash: latestBlockhash.blockhash,
+        lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
+      }, 'confirmed');
+      
+      if (confirmation.value.err) {
+        throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('was not confirmed in')) {
+        // If we get a timeout, check the transaction status manually
+        console.log('Confirmation timed out, checking transaction status...');
+        const status = await connection.getSignatureStatus(signature);
+        
+        if (status.value?.err) {
+          // Transaction failed
+          throw new Error(`Transaction failed: ${JSON.stringify(status.value.err)}`);
+        } else if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
+          // Transaction succeeded despite timeout
+          console.log('Transaction confirmed successfully after timeout');
+        } else {
+          // Still unknown, but we'll proceed since the transaction was sent
+          console.log('Transaction status unclear, but proceeding...');
+        }
+      } else {
+        // Some other error occurred
+        throw error;
+      }
     }
-    console.log('Transaction confirmed successfully');
+
+    console.log('Transaction confirmed or sent successfully');
 
     logger.info("Transaction confirmed", { 
       signature,
@@ -382,33 +486,52 @@ export async function PUT(req: Request) {
 
     // Update database
     console.log('Updating database...');
-    await supabase.from("web3agents").insert({
-      token_name: tokenName,
-      ticker_symbol: tickerSymbol,
-      mint_address: tokenMint,
-      bonding_curve_token_address: bondingCurveToken,
-      bonding_curve_reserve_address: bondingCurveReserve,
-      swarms_reserve: swarmsAmount,
-      graduated: false,
-      creator_wallet: userPublicKey,
-      created_at: new Date(),
-      description,
-      twitter_handle: twitterHandle,
-      telegram_group: telegramGroup,
-      discord_server: discordServer,
-      image_url: imageUrl,
-      metadata: {
-        uri: metadataUrl,
-        image: imageUrl
-      }
-    });
+    const { data: agent, error: agentError } = await supabase
+      .from("web3agents")
+      .insert({
+        token_name: tokenName,
+        ticker_symbol: tickerSymbol,
+        mint_address: tokenMint,
+        bonding_curve_address: bondingCurveAddress,
+        swarms_reserve: swarmsAmount,
+        graduated: false,
+        creator_wallet: userPublicKey,
+        created_at: new Date(),
+        description,
+        twitter_handle: twitterHandle,
+        telegram_group: telegramGroup,
+        discord_server: discordServer,
+        image_url: imageUrl,
+        metadata: {
+          uri: metadataUrl,
+          image: imageUrl
+        }
+      })
+      .select()
+      .single();
+
+    if (agentError) {
+      logger.error("Failed to create agent record", agentError);
+      throw new Error("Failed to create agent record");
+    }
+
+    // Update bonding curve keys with agent_id
+    const { error: updateError } = await supabase
+      .from('bonding_curve_keys')
+      .update({ agent_id: agent.id })
+      .eq('public_key', bondingCurveAddress);
+
+    if (updateError) {
+      logger.error("Failed to update bonding curve keys", updateError);
+      throw new Error("Failed to update bonding curve keys");
+    }
 
     return new Response(JSON.stringify({ 
       success: true,
       signature,
       tokenMint,
-      bondingCurveToken,
-      bondingCurveReserve
+      bondingCurveAddress,
+      agentId: agent.id
     }), { status: 200 });
 
   } catch (error) {

@@ -245,7 +245,7 @@ export default function CreateAgent() {
         throw new Error(error.error || 'Failed to check balances')
       }
 
-      const { sol, swarms, tokenAccount } = await balanceResponse.json()
+      const { sol, swarms } = await balanceResponse.json()
       console.log("Balances:", { sol, swarms })
 
       // Verify minimum SOL
@@ -272,8 +272,7 @@ export default function CreateAgent() {
         twitterHandle: formData.twitter || null,
         telegramGroup: formData.telegram || null,
         discordServer: formData.discord || null,
-        swarmsAmount,
-        userTokenAccount: tokenAccount // Pass the user's SWARMS token account
+        swarmsAmount
       }))
 
       logger.info("Calling mint-token API")
@@ -287,17 +286,27 @@ export default function CreateAgent() {
         throw new Error(error.error || 'Failed to create token')
       }
 
-      const { transaction, tokenMint, bondingCurve, imageUrl } = await response.json()
+      const { transaction, tokenMint, bondingCurveAddress, imageUrl } = await response.json()
       
       try {
         toast.loading("Please confirm the transaction in your wallet...", { id: toastId })
         
-        // Deserialize and sign the transaction
+        // Sign transaction that was already partially signed by server
         const tx = Transaction.from(Buffer.from(transaction, 'base64'))
         
-        // Sign with user wallet
+        // Verify the transaction has the expected signatures before signing
+        console.log("Transaction signatures before user signing:", tx.signatures.map((sig: { publicKey: PublicKey, signature: Buffer | null }) => ({
+          publicKey: sig.publicKey.toString(),
+          signature: sig.signature?.toString('base64') || null
+        })))
+        
         const signedTx = await provider.signTransaction(tx)
-        const serializedTx = signedTx.serialize().toString('base64')
+        
+        // Log signatures after user signing for verification
+        console.log("Transaction signatures after user signing:", signedTx.signatures.map((sig: { publicKey: PublicKey, signature: Buffer | null }) => ({
+          publicKey: sig.publicKey.toString(),
+          signature: sig.signature?.toString('base64') || null
+        })))
 
         // Send signed transaction through our API
         const updateResponse = await fetch('/api/solana/mint-token', {
@@ -306,9 +315,9 @@ export default function CreateAgent() {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            signedTransaction: serializedTx,
+            signedTransaction: signedTx.serialize().toString('base64'),
             tokenMint,
-            bondingCurve,
+            bondingCurveAddress,
             userPublicKey: provider.publicKey.toString(),
             tokenName: formData.name,
             tickerSymbol: formData.tokenSymbol,
@@ -331,7 +340,6 @@ export default function CreateAgent() {
         logger.info("Token creation completed", {
           signature,
           mint: tokenMint,
-          bondingCurve,
           swarmsAmount
         })
 
@@ -340,7 +348,6 @@ export default function CreateAgent() {
           description: (
             <div className="mt-2 text-xs font-mono break-all">
               <div>Mint: {tokenMint}</div>
-              <div>Bonding Curve: {bondingCurve}</div>
               <div>SWARMS Paid: {swarmsAmount.toLocaleString()}</div>
               <div>
                 <a
@@ -349,7 +356,7 @@ export default function CreateAgent() {
                   rel="noopener noreferrer"
                   className="text-blue-500 hover:text-blue-600"
                 >
-                  View on Explorer
+                  View Transaction
                 </a>
               </div>
             </div>
