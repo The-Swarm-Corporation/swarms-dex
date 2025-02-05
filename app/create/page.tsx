@@ -18,6 +18,13 @@ import { PublicKey, Transaction } from "@solana/web3.js"
 import { signInWithWallet } from "@/lib/auth/wallet"
 import { signAndSendTransaction } from "@/lib/solana/transaction"
 import { BN } from "@project-serum/anchor"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface FormData {
   name: string
@@ -57,6 +64,11 @@ export default function CreateAgent() {
   const [error, setError] = useState<FormError | null>(null)
   const [mounted, setMounted] = useState(false)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [tokenCreated, setTokenCreated] = useState(false)
+  const [tokenMint, setTokenMint] = useState<string>('')
+  const [bondingCurveAddress, setBondingCurveAddress] = useState<string>('')
+  const [showPoolModal, setShowPoolModal] = useState(false)
+  const [poolSwarmsAmount, setPoolSwarmsAmount] = useState('')
 
   useEffect(() => {
     setMounted(true)
@@ -151,8 +163,10 @@ export default function CreateAgent() {
       errors.image = "Agent image is required"
     }
 
-    const swarmsAmount = Number.parseInt(formData.swarmsAmount)
-    if (isNaN(swarmsAmount) || swarmsAmount < SWARMS_MINIMUM_BUY_IN) {
+    const swarmsAmount = Number(formData.swarmsAmount)
+    if (isNaN(swarmsAmount)) {
+      errors.swarmsAmount = "Please enter a valid number"
+    } else if (swarmsAmount < SWARMS_MINIMUM_BUY_IN) {
       errors.swarmsAmount = `Minimum ${SWARMS_MINIMUM_BUY_IN.toLocaleString()} SWARMS required`
     }
 
@@ -224,11 +238,6 @@ export default function CreateAgent() {
         wallet: walletAddress
       })
 
-      const swarmsAmount = Number.parseInt(formData.swarmsAmount)
-      console.log("Raw provider public key:", provider.publicKey)
-      console.log("Provider public key toString():", provider.publicKey.toString())
-      console.log("Provider public key toBase58():", provider.publicKey.toBase58())
-      
       // Check balances through our API
       const balanceResponse = await fetch('/api/solana/check-balance', {
         method: 'POST',
@@ -253,71 +262,10 @@ export default function CreateAgent() {
         throw new Error(`Insufficient SOL balance. You need at least 0.05 SOL (current: ${sol.toFixed(4)} SOL)`)
       }
 
-      // Verify SWARMS balance
-      if (!swarms || swarms < swarmsAmount) {
-        throw new Error(`Insufficient SWARMS balance. You need ${swarmsAmount} SWARMS (current: ${swarms || 0} SWARMS)`)
-      }
-
-      // Proceed with token creation
-      toast.loading("Creating your AI agent token...", { id: toastId })
-      
-      // Call the mint-token API with form data and image
-      const mintFormData = new FormData()
-      mintFormData.append('image', formData.image!)
-      mintFormData.append('data', JSON.stringify({
-        userPublicKey: provider.publicKey.toString(),
-        tokenName: formData.name,
-        tickerSymbol: formData.tokenSymbol,
-        description: formData.description,
-        twitterHandle: formData.twitter || null,
-        telegramGroup: formData.telegram || null,
-        discordServer: formData.discord || null,
-        swarmsAmount
-      }))
-
-      logger.info("Calling mint-token API")
-      const response = await fetch('/api/solana/mint-token', {
-        method: 'POST',
-        body: mintFormData
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Failed to create token')
-      }
-
-      const { transaction, tokenMint, bondingCurveAddress, imageUrl } = await response.json()
-      
-      try {
-        toast.loading("Please confirm the transaction in your wallet...", { id: toastId })
-        
-        // Sign transaction that was already partially signed by server
-        const tx = Transaction.from(Buffer.from(transaction, 'base64'))
-        
-        // Verify the transaction has the expected signatures before signing
-        console.log("Transaction signatures before user signing:", tx.signatures.map((sig: { publicKey: PublicKey, signature: Buffer | null }) => ({
-          publicKey: sig.publicKey.toString(),
-          signature: sig.signature?.toString('base64') || null
-        })))
-        
-        const signedTx = await provider.signTransaction(tx)
-        
-        // Log signatures after user signing for verification
-        console.log("Transaction signatures after user signing:", signedTx.signatures.map((sig: { publicKey: PublicKey, signature: Buffer | null }) => ({
-          publicKey: sig.publicKey.toString(),
-          signature: sig.signature?.toString('base64') || null
-        })))
-
-        // Send signed transaction through our API
-        const updateResponse = await fetch('/api/solana/mint-token', {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            signedTransaction: signedTx.serialize().toString('base64'),
-            tokenMint,
-            bondingCurveAddress,
+          // Call the mint-token API with form data and image
+          const mintFormData = new FormData()
+          mintFormData.append('image', formData.image!)
+          mintFormData.append('data', JSON.stringify({
             userPublicKey: provider.publicKey.toString(),
             tokenName: formData.name,
             tickerSymbol: formData.tokenSymbol,
@@ -325,56 +273,79 @@ export default function CreateAgent() {
             twitterHandle: formData.twitter || null,
             telegramGroup: formData.telegram || null,
             discordServer: formData.discord || null,
-            swarmsAmount,
-            imageUrl
+            swarmsAmount: formData.swarmsAmount
+          }))
+
+          toast.loading("Preparing token creation...", { id: toastId })
+          
+          // Get token creation transaction
+          const response = await fetch('/api/solana/mint-token', {
+            method: 'POST',
+            body: mintFormData
           })
-        })
 
-        if (!updateResponse.ok) {
-          const error = await updateResponse.json()
-          throw new Error(error.error || 'Failed to process transaction')
-        }
+          if (!response.ok) {
+            const error = await response.json()
+            throw new Error(error.error || 'Failed to create token')
+          }
 
-        const { signature } = await updateResponse.json()
+          const { tokenCreationTx, tokenMint, bondingCurveAddress, imageUrl } = await response.json()
 
-        logger.info("Token creation completed", {
-          signature,
-          mint: tokenMint,
-          swarmsAmount
-        })
+          try {
+            toast.loading("Please sign the transaction in your wallet...", { id: toastId })
 
-        toast.success("Token created successfully!", {
-          id: toastId,
-          description: (
-            <div className="mt-2 text-xs font-mono break-all">
-              <div>Mint: {tokenMint}</div>
-              <div>SWARMS Paid: {swarmsAmount.toLocaleString()}</div>
-              <div>
-                <a
-                  href={`https://explorer.solana.com/tx/${signature}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-500 hover:text-blue-600"
-                >
-                  View Transaction
-                </a>
-              </div>
-            </div>
-          ),
-        })
+            // Sign token creation transaction
+            const tokenTx = Transaction.from(Buffer.from(tokenCreationTx, 'base64'))
+            const signedTokenTx = await provider.signTransaction(tokenTx)
 
-        // Reset form and redirect to the agent page
-        setFormData(initialFormData)
-        setImagePreview(null)
-        router.push(`/agent/${tokenMint}`)
+            toast.loading("Confirming token creation...", { id: toastId })
 
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('User rejected')) {
-          toast.error("Transaction was rejected by user", { id: toastId })
+            // Send signed transaction
+            const confirmResponse = await fetch('/api/solana/mint-token', {
+              method: 'PUT',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                signedTokenTx: signedTokenTx.serialize().toString('base64'),
+                tokenMint,
+                bondingCurveAddress,
+                userPublicKey: provider.publicKey.toString(),
+                tokenName: formData.name,
+                tickerSymbol: formData.tokenSymbol,
+                description: formData.description,
+                twitterHandle: formData.twitter || null,
+                telegramGroup: formData.telegram || null,
+                discordServer: formData.discord || null,
+                imageUrl
+              })
+            })
+
+            if (!confirmResponse.ok) {
+              const error = await confirmResponse.json()
+              throw new Error(error.error || 'Failed to confirm token creation')
+            }
+
+            const { tokenSignature } = await confirmResponse.json()
+
+            logger.info("Token creation completed", {
+              tokenSignature,
+              mint: tokenMint
+            })
+
+            // Show success and store token details for pool creation
+            setTokenMint(tokenMint)
+            setBondingCurveAddress(bondingCurveAddress)
+            setTokenCreated(true)
+            setShowPoolModal(true)
+            
+          } catch (error) {
+            if (error instanceof Error && error.message.includes('User rejected')) {
+              toast.error("Transaction was rejected by user", { id: toastId })
         } else {
           toast.error("Failed to create token", { id: toastId })
           logger.error("Token creation failed", error as Error)
-        }
+            }
         throw error
       }
 
@@ -403,197 +374,353 @@ export default function CreateAgent() {
     }
   }
 
+  // Add new function to handle pool creation
+  const handlePoolCreation = async () => {
+    // @ts-ignore - Phantom wallet type
+    const provider = window?.phantom?.solana;
+    if (!provider) {
+      toast.error("Please install Phantom wallet");
+      return;
+    }
+
+    // If poolSwarmsAmount is empty string or 0, create pool without additional SWARMS
+    const additionalSwarmsAmount = poolSwarmsAmount ? Number(poolSwarmsAmount) : 0;
+
+    const toastId = toast.loading("Creating pool...");
+
+    try {
+      // Call create-pool API
+      const response = await fetch('/api/solana/create-pool', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tokenMint,
+          bondingCurveAddress,
+          userPublicKey: provider.publicKey.toString(),
+          swarmsAmount: additionalSwarmsAmount
+        })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to create pool');
+      }
+
+      const { transaction, poolKeys } = await response.json();
+
+      toast.loading("Please sign the transaction in your wallet...", { id: toastId });
+
+      // Sign the single transaction
+      const poolTx = Transaction.from(Buffer.from(transaction, 'base64'));
+      const signedPoolTx = await provider.signTransaction(poolTx);
+
+      toast.loading("Creating liquidity pool...", { id: toastId });
+
+      // Send signed transaction
+      const confirmResponse = await fetch('/api/solana/create-pool', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          signedTransaction: signedPoolTx.serialize().toString('base64'),
+          tokenMint,
+          bondingCurveAddress,
+          poolKeys,
+          swarmsAmount: additionalSwarmsAmount
+        })
+      });
+
+      if (!confirmResponse.ok) {
+        const error = await confirmResponse.json();
+        throw new Error(error.error || 'Failed to confirm pool');
+      }
+
+      const { signature } = await confirmResponse.json();
+
+      toast.success("Pool created successfully!", { 
+        id: toastId,
+        duration: 5000,
+        description: (
+          <div className="mt-2 text-xs font-mono break-all">
+            <a
+              href={`https://explorer.solana.com/tx/${signature}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-500 hover:text-blue-600"
+            >
+              View Transaction
+            </a>
+          </div>
+        ),
+      });
+
+      setShowPoolModal(false);
+      router.push(`/agent/${tokenMint}`);
+
+    } catch (error) {
+      console.error('Error creating pool:', error);
+      toast.error(error instanceof Error ? error.message : "Failed to create pool", { id: toastId });
+    }
+  };
+
   // Don't render until auth is loaded and we have a user
   if (!mounted || authLoading) return null
   if (!user) return null
 
   return (
-    <div className="max-w-2xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-4xl font-bold text-red-600">Create AI Agent</h1>
-        <p className="text-gray-400 mt-2">Launch your own AI agent with Swarms token backing</p>
-        <div className="mt-4 p-4 bg-black/20 rounded-lg border border-red-500/20">
-          <h3 className="text-sm font-semibold text-red-500">Requirements</h3>
-          <ul className="mt-2 text-sm text-gray-400 space-y-1">
-            <li>• Minimum {SWARMS_MINIMUM_BUY_IN.toLocaleString()} SWARMS tokens required</li>
-            <li>• Minimum 0.05 SOL for transaction fees</li>
-            <li>• Connected Phantom wallet</li>
-          </ul>
-          <p className="mt-4 text-sm text-gray-400">
-            Your token allocation will be determined by the amount of SWARMS tokens you provide and our bonding curve formula.
-            The more SWARMS you provide, the more tokens you'll receive from the 1 billion total supply.
-          </p>
+      <div className="max-w-2xl mx-auto space-y-8">
+        <div>
+          <h1 className="text-4xl font-bold text-red-600">Create AI Agent</h1>
+          <p className="text-gray-200 mt-2">Launch your own AI agent with Swarms token backing</p>
+          <div className="mt-4 p-4 bg-black/20 rounded-lg border border-red-500/20">
+            <h3 className="text-sm font-semibold text-red-500">Requirements</h3>
+            <ul className="mt-2 text-sm text-gray-200 space-y-1">
+              <li>• Minimum {SWARMS_MINIMUM_BUY_IN.toLocaleString()} SWARMS tokens required</li>
+              <li>• Minimum 0.05 SOL for transaction fees</li>
+              <li>• Connected Phantom wallet</li>
+            </ul>
+            <p className="mt-4 text-sm text-gray-200">
+              Your token allocation will be determined by the amount of SWARMS tokens you provide and our bonding curve formula.
+              The more SWARMS you provide, the more tokens you'll receive from the 1 billion total supply.
+            </p>
+          </div>
         </div>
-      </div>
 
-      {error && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
-          <AlertDescription>
-            {error.message}
-            {error.fields && (
-              <ul className="mt-2 list-disc list-inside">
-                {Object.entries(error.fields).map(
-                  ([field, message]) =>
-                    message && (
-                      <li key={field} className="text-sm">
-                        {message}
-                      </li>
-                    ),
-                )}
-              </ul>
-            )}
-          </AlertDescription>
-        </Alert>
-      )}
-
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="space-y-2">
-          <Label htmlFor="image">Agent Image *</Label>
-          <div className="flex items-center gap-4">
-            <div className="relative w-32 h-32 border-2 border-dashed border-red-600/20 rounded-lg overflow-hidden">
-              {imagePreview ? (
-                <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
-              ) : (
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <ImageIcon className="w-8 h-8 text-gray-400" />
-                </div>
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription className="text-gray-200">
+              {error.message}
+              {error.fields && (
+                <ul className="mt-2 list-disc list-inside">
+                  {Object.entries(error.fields).map(
+                    ([field, message]) =>
+                      message && (
+                        <li key={field} className="text-sm">
+                          {message}
+                        </li>
+                      ),
+                  )}
+                </ul>
               )}
-              <input
-                type="file"
-                id="image"
-                accept="image/*"
-                onChange={handleImageChange}
-                className="absolute inset-0 opacity-0 cursor-pointer"
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-2">
+            <Label htmlFor="image" className="text-gray-200">Agent Image *</Label>
+            <div className="flex items-center gap-4">
+              <div className="relative w-32 h-32 border-2 border-dashed border-red-600/20 rounded-lg overflow-hidden">
+                {imagePreview ? (
+                  <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <ImageIcon className="w-8 h-8 text-gray-400" />
+                  </div>
+                )}
+                <input
+                  type="file"
+                  id="image"
+                  accept="image/*"
+                  onChange={handleImageChange}
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm text-gray-200">Upload your agent's image (max 5MB)</p>
+                {error?.fields?.image && (
+                  <p className="text-sm text-red-500 mt-1">{error.fields.image}</p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="name" className="text-gray-200">Agent Name *</Label>
+            <Input
+              id="name"
+              name="name"
+              value={formData.name}
+              onChange={handleChange}
+              placeholder="CyberMind"
+              required
+              className={`bg-black/50 border-red-600/20 focus:border-red-600 text-gray-200 ${
+                error?.fields?.name ? "border-red-500" : ""
+              }`}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="description" className="text-gray-200">Description *</Label>
+            <Textarea
+              id="description"
+              name="description"
+              value={formData.description}
+              onChange={handleChange}
+              placeholder="Describe your AI agent..."
+              required
+              className={`bg-black/50 border-red-600/20 focus:border-red-600 min-h-[100px] text-gray-200 ${
+                error?.fields?.description ? "border-red-500" : ""
+              }`}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="swarmsAmount" className="text-gray-200">Initial SWARMS Amount *</Label>
+            <Input
+              id="swarmsAmount"
+              name="swarmsAmount"
+              type="number"
+              min={SWARMS_MINIMUM_BUY_IN}
+              value={formData.swarmsAmount}
+              onChange={handleChange}
+              placeholder={`Minimum ${SWARMS_MINIMUM_BUY_IN.toLocaleString()} SWARMS`}
+              className={`bg-black/50 border-red-600/20 focus:border-red-600 text-gray-200 ${
+                error?.fields?.swarmsAmount ? "border-red-500" : ""
+              }`}
+            />
+            <div className="text-sm text-gray-200 space-y-1">
+              <p>• Minimum {SWARMS_MINIMUM_BUY_IN.toLocaleString()} SWARMS required</p>
+              <p>• 99% will be used as reserve for the bonding curve</p>
+              <p>• 1% goes to the platform fee</p>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="tokenSymbol" className="text-gray-200">Token Symbol *</Label>
+            <Input
+              id="tokenSymbol"
+              name="tokenSymbol"
+              value={formData.tokenSymbol}
+              onChange={handleChange}
+              placeholder="CMIND"
+              required
+              className={`bg-black/50 border-red-600/20 focus:border-red-600 text-gray-200 ${
+                error?.fields?.tokenSymbol ? "border-red-500" : ""
+              }`}
+            />
+            <p className="text-xs text-gray-200">2-10 characters, uppercase letters and numbers only</p>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <Label htmlFor="twitter" className="text-gray-200">Twitter Handle</Label>
+              <Input
+                id="twitter"
+                name="twitter"
+                value={formData.twitter}
+                onChange={handleChange}
+                placeholder="@handle"
+                className="bg-black/50 border-red-600/20 focus:border-red-600 text-gray-200"
               />
             </div>
-            <div className="flex-1">
-              <p className="text-sm text-gray-400">Upload your agent's image (max 5MB)</p>
-              {error?.fields?.image && (
-                <p className="text-sm text-red-500 mt-1">{error.fields.image}</p>
-              )}
+
+            <div className="space-y-2">
+              <Label htmlFor="telegram" className="text-gray-200">Telegram Group</Label>
+              <Input
+                id="telegram"
+                name="telegram"
+                value={formData.telegram}
+                onChange={handleChange}
+                placeholder="group_name"
+                className="bg-black/50 border-red-600/20 focus:border-red-600 text-gray-200"
+              />
             </div>
           </div>
-        </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="name">Agent Name *</Label>
-          <Input
-            id="name"
-            name="name"
-            value={formData.name}
-            onChange={handleChange}
-            placeholder="CyberMind"
-            required
-            className={`bg-black/50 border-red-600/20 focus:border-red-600 ${
-              error?.fields?.name ? "border-red-500" : ""
-            }`}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="description">Description *</Label>
-          <Textarea
-            id="description"
-            name="description"
-            value={formData.description}
-            onChange={handleChange}
-            placeholder="Describe your AI agent..."
-            required
-            className={`bg-black/50 border-red-600/20 focus:border-red-600 min-h-[100px] ${
-              error?.fields?.description ? "border-red-500" : ""
-            }`}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="tokenSymbol">Token Symbol *</Label>
-          <Input
-            id="tokenSymbol"
-            name="tokenSymbol"
-            value={formData.tokenSymbol}
-            onChange={handleChange}
-            placeholder="CMIND"
-            required
-            className={`bg-black/50 border-red-600/20 focus:border-red-600 ${
-              error?.fields?.tokenSymbol ? "border-red-500" : ""
-            }`}
-          />
-          <p className="text-xs text-gray-400">2-10 characters, uppercase letters and numbers only</p>
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="swarmsAmount">SWARMS Token Amount *</Label>
-          <Input
-            id="swarmsAmount"
-            name="swarmsAmount"
-            type="number"
-            min={SWARMS_MINIMUM_BUY_IN}
-            value={formData.swarmsAmount}
-            onChange={handleChange}
-            required
-            className={`bg-black/50 border-red-600/20 focus:border-red-600 ${
-              error?.fields?.swarmsAmount ? "border-red-500" : ""
-            }`}
-          />
-          <p className="text-xs text-gray-400">Amount of SWARMS tokens you'll pay to create your agent</p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-2">
-            <Label htmlFor="twitter">Twitter Handle</Label>
+            <Label htmlFor="discord" className="text-gray-200">Discord Server</Label>
             <Input
-              id="twitter"
-              name="twitter"
-              value={formData.twitter}
+              id="discord"
+              name="discord"
+              value={formData.discord}
               onChange={handleChange}
-              placeholder="@handle"
-              className="bg-black/50 border-red-600/20 focus:border-red-600"
+              placeholder="discord.gg/..."
+              className="bg-black/50 border-red-600/20 focus:border-red-600 text-gray-200"
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="telegram">Telegram Group</Label>
-            <Input
-              id="telegram"
-              name="telegram"
-              value={formData.telegram}
-              onChange={handleChange}
-              placeholder="group_name"
-              className="bg-black/50 border-red-600/20 focus:border-red-600"
-            />
-          </div>
-        </div>
+          <Button
+            type="submit"
+            disabled={isLoading || !connection}
+            className="w-full bg-red-600 hover:bg-red-700 text-white"
+          >
+            {isLoading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Creating...
+              </>
+            ) : (
+              "Create Agent"
+            )}
+          </Button>
+        </form>
 
-        <div className="space-y-2">
-          <Label htmlFor="discord">Discord Server</Label>
-          <Input
-            id="discord"
-            name="discord"
-            value={formData.discord}
-            onChange={handleChange}
-            placeholder="discord.gg/..."
-            className="bg-black/50 border-red-600/20 focus:border-red-600"
-          />
-        </div>
+        <Dialog open={showPoolModal} onOpenChange={setShowPoolModal}>
+          <DialogContent className="bg-black/90 border border-red-600/20">
+            <DialogHeader>
+              <DialogTitle className="text-gray-200">Create Liquidity Pool</DialogTitle>
+              <DialogDescription className="text-gray-200">
+                Optionally deposit additional SWARMS tokens to increase the initial liquidity pool.
+                The pool will be created with the SWARMS already deposited during token creation.
+                1% of any additional deposit will go to the pump, and 99% will be used as reserve.
+              </DialogDescription>
+            </DialogHeader>
 
-        <Button
-          type="submit"
-          disabled={isLoading || !connection}
-          className="w-full bg-red-600 hover:bg-red-700 text-white"
-        >
-          {isLoading ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Creating...
-            </>
-          ) : (
-            "Create Agent"
-          )}
-        </Button>
-      </form>
-    </div>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="poolSwarmsAmount" className="text-gray-200">Additional SWARMS (Optional)</Label>
+                <Input
+                  id="poolSwarmsAmount"
+                  type="number"
+                  min={SWARMS_MINIMUM_BUY_IN}
+                  value={poolSwarmsAmount}
+                  onChange={(e) => setPoolSwarmsAmount(e.target.value)}
+                  placeholder="Enter amount of additional SWARMS"
+                  className="bg-black/50 border-red-600/20 focus:border-red-600 text-gray-200"
+                />
+                <p className="text-sm text-gray-200">
+                  If depositing, minimum {SWARMS_MINIMUM_BUY_IN.toLocaleString()} SWARMS required
+                </p>
+              </div>
+
+              <div className="flex justify-end space-x-4">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowPoolModal(false)}
+                  disabled={isLoading}
+                  className="text-gray-200 border-red-600/20 hover:bg-red-600/20"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => handlePoolCreation()}
+                  disabled={isLoading}
+                  className="text-gray-200 border-red-600/20 hover:bg-red-600/20"
+                >
+                  Skip Deposit
+                </Button>
+                <Button
+                  onClick={handlePoolCreation}
+                  disabled={isLoading || (poolSwarmsAmount !== '' && Number(poolSwarmsAmount) < SWARMS_MINIMUM_BUY_IN)}
+                  className="bg-red-600 hover:bg-red-700 text-white"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Creating Pool...
+                    </>
+                  ) : (
+                    "Create With Deposit"
+                  )}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
   )
 }
 

@@ -9,7 +9,7 @@ const supabaseAdmin = createClient(
 );
 
 type LogLevel = 'info' | 'warn' | 'error';
-type LogCategory = 'auth' | 'wallet' | 'token' | 'trade' | 'system';
+type LogCategory = 'auth' | 'wallet' | 'token' | 'trade' | 'system' | 'pool';
 
 interface LogActivity {
   user_id?: string;

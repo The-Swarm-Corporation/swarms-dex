@@ -17,6 +17,7 @@ import { Loader2 } from "lucide-react"
 import { logActivity } from "@/lib/supabase/logging"
 import { MAX_SLIPPAGE_PERCENT } from "@/lib/meteora/constants"
 import { ComputeBudgetProgram } from "@solana/web3.js"
+import { Transaction } from "@solana/web3.js"
 
 interface TokenTradingPanelProps {
   mintAddress: string
@@ -24,6 +25,7 @@ interface TokenTradingPanelProps {
   currentPrice: number
   swapsTokenAddress?: string
   poolAddress?: string
+  showCreatePool?: boolean
 }
 
 export function TokenTradingPanel({
@@ -32,6 +34,7 @@ export function TokenTradingPanel({
   currentPrice: initialPrice,
   swapsTokenAddress,
   poolAddress,
+  showCreatePool = false,
 }: TokenTradingPanelProps) {
   const { connection } = useSolana()
   const { user } = useAuth()
@@ -246,138 +249,274 @@ export function TokenTradingPanel({
     }
   }
 
+  const handleCreatePool = async () => {
+    try {
+      if (!connection) {
+        toast.error("Connection not initialized")
+        return
+      }
+
+      if (!user) {
+        toast.error("Please connect your wallet to create pool")
+        return
+      }
+
+      const walletAddress = user.user_metadata?.wallet_address
+      if (!walletAddress) {
+        toast.error("Wallet address not found")
+        return
+      }
+
+      setIsLoading(true)
+      const toastId = toast.loading("Creating pool...")
+
+      try {
+        // Call create-pool API with all required fields
+        const response = await fetch('/api/solana/create-pool', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            userPublicKey: walletAddress,
+            tokenMint: mintAddress,
+            swarmsAmount: 0  // No additional SWARMS for now
+          }),
+        })
+
+        if (!response.ok) {
+          const error = await response.json()
+          throw new Error(error.error || 'Failed to create pool')
+        }
+
+        const result = await response.json()
+
+        // Sign the transaction
+        // @ts-ignore - Phantom wallet type
+        const provider = window?.phantom?.solana
+        if (!provider) {
+          throw new Error("Phantom wallet not found")
+        }
+
+        toast.loading("Please sign the transaction in your wallet...", { id: toastId })
+
+        // Sign the transaction
+        const tx = Transaction.from(Buffer.from(result.transaction, 'base64'))
+        const signedTx = await provider.signTransaction(tx)
+
+        // Send signed transaction back
+        const confirmResponse = await fetch('/api/solana/create-pool', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            signedTransaction: signedTx.serialize().toString('base64'),
+            tokenMint: mintAddress,
+            poolKeys: result.poolKeys,
+            swarmsAmount: 0
+          }),
+        })
+
+        if (!confirmResponse.ok) {
+          const error = await confirmResponse.json()
+          throw new Error(error.error || 'Failed to confirm pool')
+        }
+
+        const { signature } = await confirmResponse.json()
+
+        toast.success("Pool created successfully!", {
+          id: toastId,
+          description: (
+            <div className="mt-2 text-xs font-mono break-all">
+              <div>Token: {symbol}</div>
+              <div>
+                <a
+                  href={`https://explorer.solana.com/tx/${signature}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-500 hover:text-blue-600"
+                >
+                  View transaction
+                </a>
+              </div>
+            </div>
+          ),
+        })
+
+        // Refresh the page to show the new pool
+        window.location.reload()
+
+      } catch (error) {
+        logger.error("Pool creation failed", error as Error)
+        toast.error(error instanceof Error ? error.message : "Failed to create pool", { id: toastId })
+      }
+    } catch (error) {
+      logger.error("Pool creation handling failed", error as Error)
+      toast.error("Pool creation failed to process")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   return (
     <Card className="bg-black/50 border-red-600/20">
       <CardHeader>
-        <CardTitle className="text-xl font-bold text-red-600">Trade {symbol}</CardTitle>
+        <CardTitle className="text-xl font-bold">Trade {symbol}</CardTitle>
       </CardHeader>
       <CardContent>
-        <Tabs defaultValue="buy">
-          <TabsList className="grid w-full grid-cols-2 bg-black/50">
-            <TabsTrigger value="buy" className="data-[state=active]:bg-red-600">
-              Buy
-            </TabsTrigger>
-            <TabsTrigger value="sell" className="data-[state=active]:bg-gray-600">
-              Sell
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value="buy">
-            <div className="space-y-4 pt-4">
-              <div className="space-y-2">
-                <Label>Amount (SWARMS)</Label>
-                <Input
-                  type="number"
-                  placeholder="Enter SWARMS amount"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  className="bg-black/50 border-red-600/20 focus:border-red-600"
-                />
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs text-gray-400">Slippage:</p>
-                    <div className="flex items-center gap-1">
-                      <Input
-                        type="number"
-                        value={slippage}
-                        onChange={handleSlippageChange}
-                        className="w-16 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
-                        min="0.1"
-                        max="100"
-                        step="0.1"
-                      />
-                      <span className="text-xs text-gray-400">%</span>
+        {!poolAddress ? (
+          <div className="space-y-4">
+            {showCreatePool ? (
+              <>
+                <p className="text-sm text-gray-400">No liquidity pool exists for this token yet. As the token creator, you can create one to enable trading.</p>
+                <Button
+                  onClick={handleCreatePool}
+                  disabled={isLoading}
+                  className="w-full"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Creating Pool...
+                    </>
+                  ) : (
+                    "Create Pool"
+                  )}
+                </Button>
+              </>
+            ) : (
+              <p className="text-sm text-gray-400">No liquidity pool has been established for this token yet. Trading will be enabled once the token creator creates a pool.</p>
+            )}
+          </div>
+        ) : (
+          <Tabs defaultValue="buy">
+            <TabsList className="grid w-full grid-cols-2 bg-black/50">
+              <TabsTrigger value="buy" className="data-[state=active]:bg-red-600">
+                Buy
+              </TabsTrigger>
+              <TabsTrigger value="sell" className="data-[state=active]:bg-gray-600">
+                Sell
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="buy">
+              <div className="space-y-4 pt-4">
+                <div className="space-y-2">
+                  <Label>Amount (SWARMS)</Label>
+                  <Input
+                    type="number"
+                    placeholder="Enter SWARMS amount"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="bg-black/50 border-red-600/20 focus:border-red-600"
+                  />
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs text-gray-400">Slippage:</p>
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          value={slippage}
+                          onChange={handleSlippageChange}
+                          className="w-16 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
+                          min="0.1"
+                          max="100"
+                          step="0.1"
+                        />
+                        <span className="text-xs text-gray-400">%</span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs text-gray-400">Gas (SOL):</p>
-                    <div className="flex items-center gap-1">
-                      <Input
-                        type="number"
-                        value={gasFee}
-                        onChange={handleGasFeeChange}
-                        className="w-24 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
-                        min="0.000005"
-                        step="0.000001"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <Button
-                className="w-full bg-red-600 hover:bg-red-700"
-                onClick={() => handleSwap("buy")}
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  `Buy ${symbol} with SWARMS`
-                )}
-              </Button>
-            </div>
-          </TabsContent>
-          <TabsContent value="sell">
-            <div className="space-y-4 pt-4">
-              <div className="space-y-2">
-                <Label>Amount ({symbol})</Label>
-                <Input
-                  type="number"
-                  placeholder={`Enter ${symbol} amount`}
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  className="bg-black/50 border-gray-600/20 focus:border-gray-600"
-                />
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs text-gray-400">Slippage:</p>
-                    <div className="flex items-center gap-1">
-                      <Input
-                        type="number"
-                        value={slippage}
-                        onChange={handleSlippageChange}
-                        className="w-16 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
-                        min="0.1"
-                        max="100"
-                        step="0.1"
-                      />
-                      <span className="text-xs text-gray-400">%</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs text-gray-400">Gas (SOL):</p>
-                    <div className="flex items-center gap-1">
-                      <Input
-                        type="number"
-                        value={gasFee}
-                        onChange={handleGasFeeChange}
-                        className="w-24 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
-                        min="0.000005"
-                        step="0.000001"
-                      />
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs text-gray-400">Gas (SOL):</p>
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          value={gasFee}
+                          onChange={handleGasFeeChange}
+                          className="w-24 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
+                          min="0.000005"
+                          step="0.000001"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
+                <Button
+                  className="w-full bg-red-600 hover:bg-red-700"
+                  onClick={() => handleSwap("buy")}
+                  disabled={isLoading}
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    `Buy ${symbol} with SWARMS`
+                  )}
+                </Button>
               </div>
-              <Button
-                className="w-full bg-gray-600 hover:bg-gray-700"
-                onClick={() => handleSwap("sell")}
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  `Sell ${symbol} for SWARMS`
-                )}
-              </Button>
-            </div>
-          </TabsContent>
-        </Tabs>
+            </TabsContent>
+            <TabsContent value="sell">
+              <div className="space-y-4 pt-4">
+                <div className="space-y-2">
+                  <Label>Amount ({symbol})</Label>
+                  <Input
+                    type="number"
+                    placeholder={`Enter ${symbol} amount`}
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="bg-black/50 border-gray-600/20 focus:border-gray-600"
+                  />
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs text-gray-400">Slippage:</p>
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          value={slippage}
+                          onChange={handleSlippageChange}
+                          className="w-16 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
+                          min="0.1"
+                          max="100"
+                          step="0.1"
+                        />
+                        <span className="text-xs text-gray-400">%</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs text-gray-400">Gas (SOL):</p>
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          value={gasFee}
+                          onChange={handleGasFeeChange}
+                          className="w-24 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
+                          min="0.000005"
+                          step="0.000001"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <Button
+                  className="w-full bg-gray-600 hover:bg-gray-700"
+                  onClick={() => handleSwap("sell")}
+                  disabled={isLoading}
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    `Sell ${symbol} for SWARMS`
+                  )}
+                </Button>
+              </div>
+            </TabsContent>
+          </Tabs>
+        )}
       </CardContent>
     </Card>
   )

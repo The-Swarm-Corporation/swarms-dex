@@ -16,11 +16,19 @@ import { toast } from 'sonner'
 import { getTokenByMint } from '@/lib/api'
 import type { Web3Agent } from '@/lib/supabase/types'
 
-interface TokenDetails extends Web3Agent {
+// Extend TokenDetails from Web3Agent
+interface TokenDetails {
+  mint_address: string
+  token_symbol: string
+  name: string
+  description: string
   price: number
   priceChange24h: number
   liquidityPool: number
-  swaps_token_address?: string
+  poolAddress?: string
+  creator_wallet: string
+  metadata?: any
+  is_swarm?: boolean
 }
 
 export default function TokenPage({ params }: { params: { walletaddress: string } }) {
@@ -48,10 +56,21 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
 
       // Transform token data to match our interface
       const tokenDetails: TokenDetails = {
-        ...tokenData,
+        mint_address: tokenData.mint_address,
+        token_symbol: tokenData.token_symbol,
+        name: tokenData.name,
+        description: tokenData.description,
         price: tokenData.current_price || 0,
         priceChange24h: tokenData.price_change_24h || 0,
         liquidityPool: tokenData.market_cap || 0,
+        poolAddress: (tokenData as any).pool_address || undefined,
+        creator_wallet: (tokenData as any).creator_wallet || '',
+        metadata: (tokenData as any).metadata,
+        is_swarm: tokenData.is_swarm
+      }
+      
+      if (!tokenDetails.poolAddress) {
+        console.warn('No pool address found for token:', tokenData.mint_address);
       }
       
       setToken(tokenDetails)
@@ -157,7 +176,8 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
           mintAddress={token.mint_address}
           symbol={token.token_symbol}
           currentPrice={token.price}
-          swapsTokenAddress={token.swaps_token_address}
+          poolAddress={token.poolAddress}
+          showCreatePool={!token.poolAddress && user?.user_metadata?.wallet_address === token.creator_wallet}
         />
       </div>
 
