@@ -10,6 +10,7 @@ export interface Web3User {
 }
 
 export interface Web3Agent {
+  pool_address: string | undefined
   id: string
   creator_id: string
   name: string
@@ -28,6 +29,13 @@ export interface Web3Agent {
   current_price?: number
   price_change_24h?: number
   volume_24h?: number
+  creator_wallet?: string
+  bonding_curve_address?: string
+  metadata?: {
+    pool_created_at?: string
+    pool_signature?: string
+    pool_address?: string
+  }
   market_cap?: number
   creator?: Web3User
   prices?: AgentPrice[]

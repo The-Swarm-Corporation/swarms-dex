@@ -17,7 +17,7 @@ import { Loader2 } from "lucide-react"
 import { logActivity } from "@/lib/supabase/logging"
 import { MAX_SLIPPAGE_PERCENT } from "@/lib/meteora/constants"
 import { ComputeBudgetProgram } from "@solana/web3.js"
-import { Transaction } from "@solana/web3.js"
+import { Transaction, SystemProgram, LAMPORTS_PER_SOL } from "@solana/web3.js"
 
 interface TokenTradingPanelProps {
   mintAddress: string
@@ -33,7 +33,7 @@ export function TokenTradingPanel({
   symbol,
   currentPrice: initialPrice,
   swapsTokenAddress,
-  poolAddress,
+  poolAddress: initialPoolAddress,
   showCreatePool = false,
 }: TokenTradingPanelProps) {
   const { connection } = useSolana()
@@ -47,6 +47,7 @@ export function TokenTradingPanel({
   const [trading, setTrading] = useState<TokenTrading | null>(null)
   const [meteoraService, setMeteoraService] = useState<MeteoraService | null>(null)
   const [pool, setPool] = useState<{ address: PublicKey } | null>(null)
+  const [currentPoolAddress, setCurrentPoolAddress] = useState<string | null>(initialPoolAddress || null)
 
   useEffect(() => {
     if (connection) {
@@ -58,12 +59,12 @@ export function TokenTradingPanel({
   // Initialize Meteora pool
   useEffect(() => {
     const initPool = async () => {
-      if (!meteoraService || !swapsTokenAddress || !poolAddress) return
+      if (!meteoraService || !swapsTokenAddress || !currentPoolAddress) return
 
       try {
         const tokenMint = new PublicKey(mintAddress)
         const swapsMint = new PublicKey(swapsTokenAddress)
-        const poolPublicKey = new PublicKey(poolAddress)
+        const poolPublicKey = new PublicKey(currentPoolAddress)
         const pool = await meteoraService.getPool(poolPublicKey)
 
         if (pool) {
@@ -80,7 +81,7 @@ export function TokenTradingPanel({
     }
 
     initPool()
-  }, [meteoraService, mintAddress, swapsTokenAddress, poolAddress])
+  }, [meteoraService, mintAddress, swapsTokenAddress, currentPoolAddress])
 
   useEffect(() => {
     let interval: NodeJS.Timeout
@@ -134,6 +135,13 @@ export function TokenTradingPanel({
         return
       }
 
+      // @ts-ignore - Phantom wallet type
+      const provider = window?.phantom?.solana
+      if (!provider) {
+        toast.error("Phantom wallet not found")
+        return
+      }
+
       const walletAddress = user.user_metadata?.wallet_address
       if (!walletAddress) {
         toast.error("Wallet address not found")
@@ -160,7 +168,7 @@ export function TokenTradingPanel({
       const toastId = toast.loading(`Processing ${action} order...`)
 
       try {
-        // Call our trading API
+        // Call our trading API to get the transaction
         const response = await fetch('/api/solana/trade', {
           method: 'POST',
           headers: {
@@ -181,43 +189,133 @@ export function TokenTradingPanel({
           throw new Error(error.error || 'Trade failed')
         }
 
-        const result = await response.json()
+        const { transaction: serializedTransaction, price } = await response.json()
+        
+        // Deserialize the transaction
+        const transaction = Transaction.from(Buffer.from(serializedTransaction, 'base64'))
 
-        await logActivity({
-          category: "trade",
-          level: "info",
-          action: "trade_complete",
-          details: {
-            type: action,
-            symbol,
-            amount: Number.parseFloat(amount),
-            price: result.price,
-            signature: result.signature,
-          },
-          wallet_address: walletAddress,
-        })
+        toast.loading("Please approve the transaction in your wallet...", { id: toastId })
 
-        toast.success(`${action.toUpperCase()} order completed!`, {
-          id: toastId,
-          description: (
-            <div className="mt-2 text-xs font-mono break-all">
-              <div>
-                Amount: {amount} {action === "buy" ? symbol : "SWARMS"}
-              </div>
-              <div>Price: ${result.price.toFixed(6)}</div>
-              <div>
-                <a
-                  href={`https://explorer.solana.com/tx/${result.signature}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-500 hover:text-blue-600"
-                >
-                  View transaction
-                </a>
-              </div>
-            </div>
-          ),
-        })
+        try {
+          // Let Phantom handle just the signing
+          const signedTransaction = await provider.signTransaction(transaction)
+          
+          // Send signed transaction back to server for submission
+          const submitResponse = await fetch('/api/solana/trade', {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              signedTransaction: signedTransaction.serialize().toString('base64'),
+              tokenMint: mintAddress,
+              action,
+            }),
+          })
+
+          if (!submitResponse.ok) {
+            const error = await submitResponse.json()
+            throw new Error(error.error || 'Failed to submit transaction')
+          }
+
+          const { signature } = await submitResponse.json()
+          
+          toast.loading("Confirming transaction...", { id: toastId })
+
+          // Wait for confirmation using our server endpoint
+          let confirmed = false
+          for (let i = 0; i < 3; i++) {
+            try {
+              const confirmResponse = await fetch('/api/solana/confirm-transaction', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ signature })
+              })
+
+              if (!confirmResponse.ok) {
+                const error = await confirmResponse.json()
+                if (error.error?.includes('Please check the transaction status manually')) {
+                  if (i === 2) {
+                    toast.info("Transaction sent but confirmation pending", {
+                      id: toastId,
+                      duration: 5000,
+                      description: (
+                        <div className="mt-2 text-xs font-mono break-all">
+                          <div>Amount: {amount} {action === "buy" ? "SWARMS" : symbol}</div>
+                          <div>Price: ${price.toFixed(6)}</div>
+                          <div>The transaction has been sent but is still processing.</div>
+                          <div>
+                            <a
+                              href={`https://explorer.solana.com/tx/${signature}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-500 hover:text-blue-600"
+                            >
+                              Check status in Explorer
+                            </a>
+                          </div>
+                        </div>
+                      ),
+                    })
+                    return
+                  }
+                  await new Promise(resolve => setTimeout(resolve, 2000))
+                  continue
+                }
+                throw new Error(error.error || 'Failed to confirm transaction')
+              }
+
+              confirmed = true
+              break
+            } catch (error) {
+              if (i === 2) throw error
+              await new Promise(resolve => setTimeout(resolve, 2000))
+            }
+          }
+
+          if (confirmed) {
+            await logActivity({
+              category: "trade",
+              level: "info",
+              action: "trade_complete",
+              details: {
+                type: action,
+                symbol,
+                amount: Number.parseFloat(amount),
+                price,
+                signature,
+              },
+              wallet_address: walletAddress,
+            })
+
+            toast.success(`${action.toUpperCase()} order completed!`, {
+              id: toastId,
+              description: (
+                <div className="mt-2 text-xs font-mono break-all">
+                  <div>Amount: {amount} {action === "buy" ? symbol : "SWARMS"}</div>
+                  <div>Price: ${price.toFixed(6)}</div>
+                  <div>
+                    <a
+                      href={`https://explorer.solana.com/tx/${signature}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-500 hover:text-blue-600"
+                    >
+                      View transaction
+                    </a>
+                  </div>
+                </div>
+              ),
+            })
+          }
+        } catch (signError: any) {
+          // Handle user rejection or signing errors specifically
+          if (signError.message?.includes('User rejected')) {
+            toast.error("Transaction cancelled by user", { id: toastId })
+          } else {
+            throw signError
+          }
+        }
 
         setAmount("")
       } catch (error) {
@@ -268,10 +366,10 @@ export function TokenTradingPanel({
       }
 
       setIsLoading(true)
-      const toastId = toast.loading("Creating pool...")
+      const toastId = toast.loading("Checking pool creation requirements...")
 
       try {
-        // Call create-pool API with all required fields
+        // Get the cost estimate first
         const response = await fetch('/api/solana/create-pool', {
           method: 'POST',
           headers: {
@@ -280,56 +378,255 @@ export function TokenTradingPanel({
           body: JSON.stringify({
             userPublicKey: walletAddress,
             tokenMint: mintAddress,
-            swarmsAmount: 0  // No additional SWARMS for now
+            swarmsAmount: 0,
+            createPool: false
           }),
         })
 
         if (!response.ok) {
           const error = await response.json()
-          throw new Error(error.error || 'Failed to create pool')
+          throw new Error(error.error || 'Failed to get pool creation cost')
         }
 
         const result = await response.json()
+        
+        // Show cost estimation to user
+        if (!result.readyToProceed) {
+          toast.error("Insufficient SOL in bonding curve account", {
+            id: toastId,
+            duration: 8000,
+            description: (
+              <div className="mt-2 text-xs space-y-2">
+                <p>The bonding curve account needs more SOL to create the pool:</p>
+                <div className="font-mono">
+                  <div>Required: {result.estimatedFeeSol.toFixed(6)} SOL</div>
+                  <div>Recommended (with buffer): {result.recommendedSol.toFixed(6)} SOL</div>
+                  <div>Current Balance: {result.currentBondingCurveBalance.toFixed(6)} SOL</div>
+                  <div>Need to send: {result.additionalSolNeeded.toFixed(6)} SOL</div>
+                </div>
+                <p>Send SOL to:</p>
+                <div className="font-mono break-all">{result.bondingCurveAddress}</div>
+                <div className="pt-2">
+                  <Button
+                    onClick={async () => {
+                      try {
+                        // @ts-ignore - Phantom wallet type
+                        const provider = window?.phantom?.solana
+                        if (!provider) {
+                          throw new Error("Phantom wallet not found")
+                        }
 
-        // Sign the transaction
-        // @ts-ignore - Phantom wallet type
-        const provider = window?.phantom?.solana
-        if (!provider) {
-          throw new Error("Phantom wallet not found")
+                        // Check if wallet is connected
+                        if (!provider.isConnected) {
+                          await provider.connect();
+                        }
+
+                        const transferAmount = Math.ceil(result.additionalSolNeeded * LAMPORTS_PER_SOL)
+                        
+                        // Get transfer transaction from server
+                        const transferResponse = await fetch('/api/solana/create-pool', {
+                          method: 'PATCH',
+                          headers: {
+                            'Content-Type': 'application/json',
+                          },
+                          body: JSON.stringify({
+                            userPublicKey: walletAddress,
+                            bondingCurveAddress: result.bondingCurveAddress,
+                            amount: transferAmount
+                          }),
+                        });
+
+                        if (!transferResponse.ok) {
+                          const error = await transferResponse.json();
+                          throw new Error(error.error || 'Failed to create transfer transaction');
+                        }
+
+                        const { transaction: serializedTransaction } = await transferResponse.json();
+                        const transaction = Transaction.from(Buffer.from(serializedTransaction, 'base64'));
+
+                        toast.loading("Please approve the transfer in your wallet...", { id: toastId });
+
+                        try {
+                          // Let Phantom handle the transaction sending
+                          const { signature } = await provider.signAndSendTransaction(transaction);
+                          
+                          toast.loading("Confirming transfer...", { id: toastId });
+                          
+                          // Show explorer link immediately after sending
+                          toast.message("Transaction sent", {
+                            duration: 0, // Keep until we confirm
+                            description: (
+                              <div className="mt-2 text-xs font-mono break-all">
+                                <div>Amount: {(transferAmount / LAMPORTS_PER_SOL).toFixed(6)} SOL</div>
+                                <div>
+                                  <a
+                                    href={`https://explorer.solana.com/tx/${signature}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-500 hover:text-blue-600"
+                                  >
+                                    View in Explorer
+                                  </a>
+                                </div>
+                              </div>
+                            ),
+                          });
+
+                          // Wait for confirmation using our server endpoint
+                          let confirmed = false;
+                          for (let i = 0; i < 3; i++) {
+                            try {
+                              const confirmResponse = await fetch('/api/solana/confirm-transaction', {
+                                method: 'POST',
+                                headers: {
+                                  'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({ signature })
+                              });
+
+                              if (!confirmResponse.ok) {
+                                const error = await confirmResponse.json();
+                                // If it's still processing, retry
+                                if (error.error?.includes('Please check the transaction status manually')) {
+                                  if (i === 2) {
+                                    // On last attempt, show pending message
+                                    toast.info("Transfer sent but confirmation pending", {
+                                      id: toastId,
+                                      duration: 5000,
+                                      description: (
+                                        <div className="mt-2 text-xs font-mono break-all">
+                                          <div>Amount: {(transferAmount / LAMPORTS_PER_SOL).toFixed(6)} SOL</div>
+                                          <div>The transfer has been sent but is still processing.</div>
+                                          <div>
+                                            <a
+                                              href={`https://explorer.solana.com/tx/${signature}`}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="text-blue-500 hover:text-blue-600"
+                                            >
+                                              Check status in Explorer
+                                            </a>
+                                          </div>
+                                        </div>
+                                      ),
+                                    });
+                                    return;
+                                  }
+                                  // Wait longer between retries
+                                  await new Promise(resolve => setTimeout(resolve, 2000));
+                                  continue;
+                                }
+                                throw new Error(error.error || 'Failed to confirm transfer');
+                              }
+
+                              confirmed = true;
+                              break;
+                            } catch (error) {
+                              if (i === 2) throw error;
+                              await new Promise(resolve => setTimeout(resolve, 2000));
+                            }
+                          }
+
+                          if (confirmed) {
+                            toast.success("SOL transferred successfully!", {
+                              id: toastId,
+                              duration: 5000,
+                              description: (
+                                <div className="mt-2 text-xs font-mono break-all">
+                                  <div>Amount: {(transferAmount / LAMPORTS_PER_SOL).toFixed(6)} SOL</div>
+                                  <div>
+                                    <a
+                                      href={`https://explorer.solana.com/tx/${signature}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-blue-500 hover:text-blue-600"
+                                    >
+                                      View transaction
+                                    </a>
+                                  </div>
+                                </div>
+                              ),
+                            });
+
+                            // Try pool creation again after a short delay
+                            setTimeout(() => {
+                              handleCreatePool();
+                            }, 2000);
+                          }
+
+                        } catch (signError: any) {
+                          // Handle user rejection or signing errors specifically
+                          if (signError.message?.includes('User rejected')) {
+                            toast.error("Transfer cancelled by user", { id: toastId });
+                          } else {
+                            throw signError;
+                          }
+                        }
+
+                      } catch (error) {
+                        console.error('Transfer failed:', error);
+                        toast.error(
+                          error instanceof Error ? error.message : "Failed to transfer SOL",
+                          { id: toastId }
+                        );
+                      }
+                    }}
+                    size="sm"
+                    className="w-full bg-red-600 hover:bg-red-700"
+                  >
+                    Transfer {result.additionalSolNeeded.toFixed(6)} SOL
+                  </Button>
+                </div>
+              </div>
+            )
+          })
+          return
         }
 
-        toast.loading("Please sign the transaction in your wallet...", { id: toastId })
+        // If we have enough balance, proceed with pool creation
+        toast.loading("Creating pool...", { id: toastId })
 
-        // Sign the transaction
-        const tx = Transaction.from(Buffer.from(result.transaction, 'base64'))
-        const signedTx = await provider.signTransaction(tx)
-
-        // Send signed transaction back
-        const confirmResponse = await fetch('/api/solana/create-pool', {
-          method: 'PUT',
+        // Call create-pool API to create the pool
+        const createResponse = await fetch('/api/solana/create-pool', {
+          method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            signedTransaction: signedTx.serialize().toString('base64'),
+            userPublicKey: walletAddress,
             tokenMint: mintAddress,
-            poolKeys: result.poolKeys,
-            swarmsAmount: 0
+            swarmsAmount: 0,
+            createPool: true  // Actually create the pool
           }),
         })
 
-        if (!confirmResponse.ok) {
-          const error = await confirmResponse.json()
-          throw new Error(error.error || 'Failed to confirm pool')
+        if (!createResponse.ok) {
+          const error = await createResponse.json()
+          throw new Error(error.error || 'Failed to create pool')
         }
 
-        const { signature } = await confirmResponse.json()
+        const { signature, poolAddress, message } = await createResponse.json()
 
-        toast.success("Pool created successfully!", {
+        // Initialize the pool immediately
+        if (poolAddress && meteoraService) {
+          try {
+            const poolPublicKey = new PublicKey(poolAddress)
+            const newPool = await meteoraService.getPool(poolPublicKey)
+            if (newPool) {
+              setPool(newPool)
+              setCurrentPoolAddress(poolAddress)
+            }
+          } catch (error) {
+            console.error("Failed to initialize new pool:", error)
+          }
+        }
+
+        toast.success(message, {
           id: toastId,
           description: (
             <div className="mt-2 text-xs font-mono break-all">
               <div>Token: {symbol}</div>
+              {poolAddress && <div>Pool: {poolAddress}</div>}
               <div>
                 <a
                   href={`https://explorer.solana.com/tx/${signature}`}
@@ -342,10 +639,10 @@ export function TokenTradingPanel({
               </div>
             </div>
           ),
-        })
+        });
 
-        // Refresh the page to show the new pool
-        window.location.reload()
+        // No need to reload the page, just update the UI
+        setCurrentPoolAddress(poolAddress)
 
       } catch (error) {
         logger.error("Pool creation failed", error as Error)
@@ -365,7 +662,7 @@ export function TokenTradingPanel({
         <CardTitle className="text-xl font-bold">Trade {symbol}</CardTitle>
       </CardHeader>
       <CardContent>
-        {!poolAddress ? (
+        {!currentPoolAddress ? (
           <div className="space-y-4">
             {showCreatePool ? (
               <>

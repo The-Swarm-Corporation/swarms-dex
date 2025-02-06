@@ -1,4 +1,4 @@
-import { Connection, PublicKey, LAMPORTS_PER_SOL, Transaction, SystemProgram, Keypair, TransactionInstruction, SYSVAR_RENT_PUBKEY, SYSVAR_INSTRUCTIONS_PUBKEY } from "@solana/web3.js";
+import { Connection, PublicKey, LAMPORTS_PER_SOL, Transaction, SystemProgram, Keypair, TransactionInstruction, SYSVAR_RENT_PUBKEY, SYSVAR_INSTRUCTIONS_PUBKEY, ComputeBudgetProgram } from "@solana/web3.js";
 import { createClient } from "@supabase/supabase-js";
 import { createTokenAndMint } from "@/lib/solana/token";
 import { logger } from "@/lib/logger";
@@ -34,6 +34,7 @@ import {
 } from '@raydium-io/raydium-sdk';
 import { RAYDIUM_PROGRAM_ID } from '@/lib/raydium/constants';
 import { BN } from '@project-serum/anchor';
+import { AmmImpl } from "@mercurial-finance/dynamic-amm-sdk";
 // Debug prints for environment variables
 console.log('ENV CHECK:');
 console.log('DAO_TREASURY:', process.env.NEXT_PUBLIC_DAO_TREASURY_ADDRESS);
@@ -95,6 +96,7 @@ const INITIAL_SUPPLY = 1_000_000_000;
 const INITIAL_VIRTUAL_SWARMS = 500; // 500 SWARMS virtual reserve
 const INITIAL_TOKEN_SUPPLY = 1_073_000_191; // 1,073,000,191 tokens
 const K_VALUE = INITIAL_TOKEN_SUPPLY * INITIAL_VIRTUAL_SWARMS; // k = initial_supply * initial_virtual_swarms
+const POOL_CREATION_SOL = 0.12; // Fixed amount for pool creation
 
 console.log('Creating SWARMS Token PublicKey...');
 try {
@@ -139,9 +141,104 @@ function calculatePrice(swarmsAmount: number): number {
   return priceDelta;
 }
 
-// Raydium official fee accounts
-const RAYDIUM_CLMM_FEE_ACCOUNT = new PublicKey("DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8");
-const RAYDIUM_V4_FEE_ACCOUNT = new PublicKey("7YttLkHDoNj9wyDur5pM1ejNaAvT9X4eqaYcHQqtj2G5");
+// Add helper function to simulate pool creation cost
+async function simulatePoolCreationCost(
+  connection: Connection,
+  bondingCurveKeypair: PublicKey,
+  mintKeypair: PublicKey,
+): Promise<number> {
+  // Set up pool parameters
+  const baseDecimals = TOKEN_DECIMALS;
+  const quoteDecimals = TOKEN_DECIMALS;
+  const baseAmount = new BN(100_000).mul(new BN(10 ** baseDecimals));
+  const quoteAmount = new BN(100).mul(new BN(10 ** quoteDecimals));
+
+  // Create simulation transaction
+  const initPoolTx = await AmmImpl.createCustomizablePermissionlessConstantProductPool(
+    connection,
+    bondingCurveKeypair,
+    mintKeypair,
+    SWARMS_TOKEN_ADDRESS,
+    baseAmount,
+    quoteAmount,
+    {
+      tradeFeeNumerator: new BN(30),
+      activationType: 0,
+      activationPoint: null,
+      hasAlphaVault: false,
+      padding: Array(32).fill(0)
+    },
+    {
+      cluster: 'mainnet-beta'
+    }
+  );
+
+  // Add compute budget instruction
+  const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 });
+  initPoolTx.instructions = [modifyComputeUnits, ...initPoolTx.instructions];
+  initPoolTx.feePayer = bondingCurveKeypair;
+
+  // Get latest blockhash
+  const { blockhash } = await connection.getLatestBlockhash('finalized');
+  initPoolTx.recentBlockhash = blockhash;
+
+  // Simulate transaction
+  const simulation = await connection.simulateTransaction(initPoolTx);
+  
+  if (simulation.value.err) {
+    throw new Error(`Pool creation simulation failed: ${JSON.stringify(simulation.value.err)}`);
+  }
+
+  // Calculate required SOL based on simulation
+  const estimatedFee = simulation.value.unitsConsumed 
+    ? (simulation.value.unitsConsumed * 5000) / 10 ** 6  // Assuming default 5000 microlamports per CU
+    : 0.01; // Fallback estimate of 0.01 SOL
+
+  // Add rent exemption costs for any accounts that will be created
+  const rentExempt = await connection.getMinimumBalanceForRentExemption(1024); // Approximate size for pool accounts
+  const totalRentExempt = (rentExempt * 3) / LAMPORTS_PER_SOL; // Multiple accounts might be created
+
+  // Return total cost with buffer
+  return (estimatedFee + totalRentExempt) * 1.2; // 20% buffer
+}
+
+// Add function to calculate total required SOL
+async function calculateRequiredSol(
+  connection: Connection,
+  userPubkey: PublicKey,
+  mintKeypair: PublicKey,
+  bondingCurveKeypair: PublicKey
+): Promise<number> {
+  // 1. Calculate rent exemptions
+  const accountRentExempt = await connection.getMinimumBalanceForRentExemption(0);
+  const mintRentExempt = await connection.getMinimumBalanceForRentExemption(MINT_SIZE);
+  const ataRentExempt = await connection.getMinimumBalanceForRentExemption(165); // Standard ATA size
+  
+  // 2. Simulate pool creation cost
+  const poolCreationCost = await simulatePoolCreationCost(
+    connection,
+    bondingCurveKeypair,
+    mintKeypair
+  );
+
+  // 3. Calculate total with all components
+  const totalCost = (
+    accountRentExempt +    // Bonding curve account rent
+    mintRentExempt +       // Mint account rent
+    (ataRentExempt * 2) +  // Two ATAs (token and SWARMS)
+    poolCreationCost       // Pool creation cost (includes its own buffer)
+  ) / LAMPORTS_PER_SOL;
+
+  console.log('Cost breakdown:', {
+    accountRent: accountRentExempt / LAMPORTS_PER_SOL,
+    mintRent: mintRentExempt / LAMPORTS_PER_SOL,
+    ataRent: (ataRentExempt * 2) / LAMPORTS_PER_SOL,
+    poolCreation: poolCreationCost,
+    total: totalCost
+  });
+
+  return totalCost;
+}
 
 export async function POST(req: Request) {
   try {
@@ -211,36 +308,27 @@ export async function POST(req: Request) {
       )
     );
 
-    // 3. Create bonding curve account
-    const bondingCurveRentExempt = await connection.getMinimumBalanceForRentExemption(165);
+    // Calculate exact required SOL amount
+    const bondingCurveRentExempt = await connection.getMinimumBalanceForRentExemption(0);
+    const initialSolAmount = POOL_CREATION_SOL * LAMPORTS_PER_SOL;
+    
     transaction.add(
       SystemProgram.createAccount({
-        fromPubkey: userPubkey,  // User pays for account creation
+        fromPubkey: userPubkey,
         newAccountPubkey: bondingCurveKeypair.publicKey,
-        space: 165,
-        lamports: bondingCurveRentExempt,
-        programId: TOKEN_PROGRAM_ID
+        space: 0,  // No data needed for a wallet account
+        lamports: bondingCurveRentExempt + initialSolAmount, // Add 0.12 SOL for pool creation
+        programId: SystemProgram.programId  // Make it a system account
       })
     );
 
-    // 4. Initialize bonding curve token account
-    transaction.add(
-      createInitializeAccountInstruction(
-        bondingCurveKeypair.publicKey,
-        mintKeypair.publicKey,
-        bondingCurveKeypair.publicKey,
-        TOKEN_PROGRAM_ID
-      )
-    );
-
-    // Create token ATA for bonding curve account
+    // Create token ATAs for bonding curve
     const bondingCurveTokenATA = await getAssociatedTokenAddress(
       mintKeypair.publicKey,  // New token mint
       bondingCurveKeypair.publicKey, // Owner
       false
     );
 
-    // Create SWARMS ATA for bonding curve account
     const bondingCurveSwarmsATA = await getAssociatedTokenAddress(
       SWARMS_TOKEN_ADDRESS,
       bondingCurveKeypair.publicKey,
@@ -264,16 +352,14 @@ export async function POST(req: Request) {
     const feeAmount = totalAmount / BigInt(100); // 1% fee
     const reserveAmount = totalAmount - feeAmount; // 99% for reserve
 
-    // Add ATA creation instructions
+    // Create ATAs
     transaction.add(
-      // Create ATA for the new token
       createAssociatedTokenAccountInstruction(
         userPubkey,            // Payer
         bondingCurveTokenATA,  // ATA address
         bondingCurveKeypair.publicKey, // Owner
         mintKeypair.publicKey  // Mint
       ),
-      // Create ATA for SWARMS token
       createAssociatedTokenAccountInstruction(
         userPubkey,            // Payer
         bondingCurveSwarmsATA, // ATA address
@@ -284,7 +370,7 @@ export async function POST(req: Request) {
 
     // Add SWARMS transfer instructions
     transaction.add(
-      // Transfer 99% to bonding curve
+      // Transfer 99% to bonding curve's SWARMS ATA
       createTransferInstruction(
         userSwarmsATA,
         bondingCurveSwarmsATA,
@@ -300,13 +386,13 @@ export async function POST(req: Request) {
       )
     );
 
-    // 5. Mint initial supply to bonding curve's token ATA
+    // Mint initial supply to bonding curve's token ATA
     const initialSupply = BigInt(INITIAL_SUPPLY) * BigInt(10 ** TOKEN_DECIMALS);
     transaction.add(
       createMintToInstruction(
         mintKeypair.publicKey,       // Mint
-        bondingCurveTokenATA,        // Destination (owned by bonding curve)
-        mintKeypair.publicKey,       // Mint Authority (mint keypair)
+        bondingCurveTokenATA,        // Destination (bonding curve's ATA)
+        mintKeypair.publicKey,       // Mint Authority
         initialSupply                // Amount
       )
     );
@@ -366,50 +452,24 @@ export async function POST(req: Request) {
     });
     console.log("Added metadata")
 
-    // 8. Finally, remove mint authority (mint keypair transfers to null)
-    transaction.add(
-      createSetAuthorityInstruction(
-        mintKeypair.publicKey,       // Mint account
-        mintKeypair.publicKey,       // Current authority (mint keypair)
-        AuthorityType.MintTokens,    // Authority type
-        null                         // New authority (null means no one)
-      )
-    );
+    // Add compute budget instruction for priority
+    const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 });
+    const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 });
+    transaction.add(modifyComputeUnits, addPriorityFee);
 
     // Get latest blockhash
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    const { blockhash } = await connection.getLatestBlockhash('finalized');
     transaction.recentBlockhash = blockhash;
-    transaction.lastValidBlockHeight = lastValidBlockHeight;
 
     // Partial sign with mint keypair and bonding curve keypair
     transaction.partialSign(mintKeypair, bondingCurveKeypair);
-
-    // Log transaction signers for debugging
-    console.log('Transaction requires signatures from:', {
-      feePayer: transaction.feePayer?.toBase58(),
-      signers: transaction.signatures.map(s => ({
-        publicKey: s.publicKey.toBase58(),
-        signature: s.signature ? 'signed' : 'unsigned'
-      }))
-    });
-
-    // Serialize token creation transaction
-    const tokenCreationTx = transaction.serialize({ 
-      requireAllSignatures: false,
-      verifySignatures: false 
-    }).toString('base64');
-
-    // Encrypt private keys
-    const encryptedBondingCurvePrivateKey = await encrypt(
-      Buffer.from(bondingCurveKeypair.secretKey).toString('base64')
-    );
 
     // Store bonding curve keypair in database
     const { error: dbError } = await supabase
       .from('bonding_curve_keys')
       .insert({
         public_key: bondingCurveKeypair.publicKey.toString(),
-        encrypted_private_key: encryptedBondingCurvePrivateKey,
+        encrypted_private_key: await encrypt(Buffer.from(bondingCurveKeypair.secretKey).toString('base64')),
         metadata: {
           mint_address: mintKeypair.publicKey.toString(),
           user_public_key: userPublicKey
@@ -421,9 +481,9 @@ export async function POST(req: Request) {
       throw new Error("Failed to store bonding curve keys");
     }
 
-    // Return transaction for signing
+    // Return unsigned transaction and addresses
     return new Response(JSON.stringify({ 
-      tokenCreationTx,
+      tokenCreationTx: transaction.serialize({ requireAllSignatures: false }).toString('base64'),
       tokenMint: mintKeypair.publicKey.toString(),
       bondingCurveAddress: bondingCurveKeypair.publicKey.toString(),
       imageUrl
@@ -435,125 +495,85 @@ export async function POST(req: Request) {
   }
 }
 
-// Handle signed token creation transaction and update database
+// Handle signed token creation transaction
 export async function PUT(req: Request) {
   try {
-    const { 
-      signedTokenTx,
-      tokenMint,
-      bondingCurveAddress,
-      userPublicKey,
-      tokenName,
-      tickerSymbol,
-      description,
-      twitterHandle,
-      telegramGroup,
-      discordServer,
-      imageUrl
-    } = await req.json();
-    
+    const { signedTokenTx, tokenMint, bondingCurveAddress, userPublicKey, ...metadata } = await req.json();
+
     const connection = new Connection(RPC_URL, {
       commitment: 'confirmed',
-      confirmTransactionInitialTimeout: 180000 // 3 minute timeout
+      confirmTransactionInitialTimeout: 180000
     });
 
-    // Deserialize the signed transaction
-    const tokenTx = Transaction.from(Buffer.from(signedTokenTx, 'base64'));
+    // Send and confirm transaction
+    const tx = Transaction.from(Buffer.from(signedTokenTx, 'base64'));
     
-    // Send with retry logic
-    let tokenSignature = '';
-    let retryCount = 0;
-    const MAX_RETRIES = 3;
+    // Get fresh blockhash for sending
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    tx.recentBlockhash = blockhash;
 
-    while (retryCount < MAX_RETRIES) {
+    console.log('Sending transaction with details:', {
+      signers: tx.signatures.map(s => ({
+        publicKey: s.publicKey.toString(),
+        signature: s.signature ? 'signed' : 'unsigned'
+      }))
+    });
+
+    // Send with retries
+    let signature;
+    for (let i = 0; i < 3; i++) {
       try {
-        console.log(`Attempt ${retryCount + 1} to send token creation transaction...`);
-        
-        // Send the transaction without modifying it
-        tokenSignature = await connection.sendRawTransaction(tokenTx.serialize(), {
+        signature = await connection.sendRawTransaction(tx.serialize(), {
           skipPreflight: false,
           preflightCommitment: 'confirmed',
           maxRetries: 3
         });
-        console.log('Token creation sent:', tokenSignature);
-
-        // Wait for confirmation with patience
-        console.log('Waiting for confirmation (up to 3 minutes)...');
-        let confirmationStatus = null;
-        const startTime = Date.now();
-        const TIMEOUT = 180000; // 3 minutes
-
-        while (Date.now() - startTime < TIMEOUT) {
-          try {
-            const response = await connection.getSignatureStatus(tokenSignature);
-            confirmationStatus = response.value?.confirmationStatus;
-            
-            if (confirmationStatus === 'confirmed' || confirmationStatus === 'finalized') {
-              console.log(`Transaction ${confirmationStatus} after ${((Date.now() - startTime)/1000).toFixed(1)} seconds`);
-              
-              if (response.value?.err) {
-                throw new Error(`Transaction failed: ${JSON.stringify(response.value.err)}`);
-              }
-              
-              // Successfully confirmed
-              break;
-            }
-            
-            // Still pending, wait a bit before checking again
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            process.stdout.write('.');  // Show progress
-            
-          } catch (checkError) {
-            console.log('Error checking status:', checkError);
-            // Don't throw here, just continue waiting
-          }
-        }
-
-        if (!confirmationStatus || (confirmationStatus !== 'confirmed' && confirmationStatus !== 'finalized')) {
-          throw new Error('Transaction confirmation timed out');
-        }
-
-        // If we get here, transaction was successful
-        console.log('\nTransaction confirmed successfully');
         break;
-
       } catch (error) {
-        retryCount++;
-        console.log(`Attempt ${retryCount} failed:`, error);
-        
-        if (retryCount === MAX_RETRIES) {
-          throw error;
-        }
-        
-        // Wait before retrying with exponential backoff
-        const backoffTime = 1000 * Math.pow(2, retryCount);
-        console.log(`Waiting ${backoffTime/1000} seconds before retry...`);
-        await new Promise(resolve => setTimeout(resolve, backoffTime));
+        if (i === 2) throw error;
+        console.log(`Send attempt ${i + 1} failed, retrying...`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
 
-    // Create initial database entry
-    console.log('Creating database entry...');
+    if (!signature) {
+      throw new Error('Failed to send transaction after retries');
+    }
+
+    console.log('Transaction sent:', signature);
+
+    // Confirm with shorter timeout since we have fresh blockhash
+    const confirmation = await connection.confirmTransaction({
+      signature,
+      blockhash,
+      lastValidBlockHeight
+    }, 'confirmed');
+
+    if (confirmation.value.err) {
+      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
+
+    // Create database entry
     const { data: agent, error: agentError } = await supabase
       .from("web3agents")
       .insert({
-        name: tokenName,
-        description: description,
-        token_symbol: tickerSymbol,
+        name: metadata.tokenName,
+        description: metadata.description,
+        token_symbol: metadata.tickerSymbol,
         mint_address: tokenMint,
         bonding_curve_address: bondingCurveAddress,
         graduated: false,
         creator_wallet: userPublicKey,
         created_at: new Date(),
-        twitter_handle: twitterHandle,
-        telegram_group: telegramGroup,
-        discord_server: discordServer,
-        image_url: imageUrl,
+        twitter_handle: metadata.twitterHandle,
+        telegram_group: metadata.telegramGroup,
+        discord_server: metadata.discordServer,
+        image_url: metadata.imageUrl,
         initial_supply: INITIAL_SUPPLY,
-        liquidity_pool_size: 0, // Will be updated after pool creation
+        liquidity_pool_size: 0,
         metadata: {
-          uri: imageUrl,
-          image: imageUrl,
+          uri: metadata.imageUrl,
+          image: metadata.imageUrl,
           initial_token_supply: INITIAL_TOKEN_SUPPLY,
           created_at: new Date().toISOString()
         }
@@ -562,27 +582,21 @@ export async function PUT(req: Request) {
       .single();
 
     if (agentError) {
-      logger.error("Failed to create agent record", agentError);
       throw new Error("Failed to create agent record");
     }
 
     // Update bonding curve keys
-    const { error: updateError } = await supabase
+    await supabase
       .from('bonding_curve_keys')
       .update({ 
         agent_id: agent.id,
-        token_signature: tokenSignature
+        token_signature: signature
       })
       .eq('public_key', bondingCurveAddress);
 
-    if (updateError) {
-      logger.error("Failed to update bonding curve keys", updateError);
-      throw new Error("Failed to update bonding curve keys");
-    }
-
     return new Response(JSON.stringify({ 
       success: true,
-      tokenSignature,
+      signature,
       tokenMint,
       bondingCurveAddress,
       agentId: agent.id
@@ -590,7 +604,6 @@ export async function PUT(req: Request) {
 
   } catch (error) {
     console.error('Error processing transaction:', error);
-    logger.error("Error processing transaction", error as Error);
     return new Response(JSON.stringify({ 
       error: error instanceof Error ? error.message : "Failed to process transaction" 
     }), { status: 500 });

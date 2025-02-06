@@ -1,62 +1,141 @@
-import { Connection, PublicKey, Transaction, Keypair, SystemProgram } from "@solana/web3.js";
+import { Connection, PublicKey, Transaction, Keypair, SystemProgram, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { AnchorProvider } from "@project-serum/anchor";
 import { createClient } from "@supabase/supabase-js";
 import { logger } from "@/lib/logger";
 import { 
   getAssociatedTokenAddress, 
-  TOKEN_PROGRAM_ID, 
-  createTransferInstruction,
-  createAssociatedTokenAccountInstruction,
-  ASSOCIATED_TOKEN_PROGRAM_ID
+  TOKEN_PROGRAM_ID,
+  getMint
 } from "@solana/spl-token";
 import { decrypt } from '@/lib/crypto';
+import { AmmImpl } from "@mercurial-finance/dynamic-amm-sdk";
 import { 
-  Liquidity,
-  TxVersion,
-  LIQUIDITY_STATE_LAYOUT_V4
-} from '@raydium-io/raydium-sdk';
-import { RAYDIUM_PROGRAM_ID } from '@/lib/raydium/constants';
+  deriveCustomizablePermissionlessConstantProductPoolAddress,
+  createProgram
+} from "@mercurial-finance/dynamic-amm-sdk/dist/cjs/src/amm/utils";
 import { BN } from '@project-serum/anchor';
-import { TransactionMessage, VersionedTransaction } from '@solana/web3.js';
-import { Clmm } from '@raydium-io/raydium-sdk';
-import Decimal from 'decimal.js';
 import { ComputeBudgetProgram } from '@solana/web3.js';
+import { sendAndConfirmTransaction } from "@solana/web3.js";
 
 const RPC_URL = process.env.RPC_URL as string;
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 // Initialize PublicKeys
-const SWARMS_PUMP_ADDRESS = new PublicKey(process.env.NEXT_PUBLIC_SWARMS_PLATFORM_TEST_ADDRESS!);
 const SWARMS_TOKEN_ADDRESS = new PublicKey(process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS!);
-const RAYDIUM_V4_FEE_ACCOUNT = new PublicKey("7YttLkHDoNj9wyDur5pM1ejNaAvT9X4eqaYcHQqtj2G5");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } });
 
 // Constants
 const TOKEN_DECIMALS = 6;
-const INITIAL_VIRTUAL_SWARMS = 500; // 500 SWARMS virtual reserve
-const INITIAL_TOKEN_SUPPLY = 1_073_000_191; // 1,073,000,191 tokens
-const K_VALUE = INITIAL_TOKEN_SUPPLY * INITIAL_VIRTUAL_SWARMS; // k = 1,073,000,191 * 500
+const POOL_CREATION_BUFFER = 1.2; // 20% buffer for network congestion
 
-// Calculate price for given SWARMS amount using bonding curve formula
-function calculatePrice(swarmsAmount: number): number {
-  // Price is the derivative of the bonding curve y = INITIAL_TOKEN_SUPPLY - K_VALUE/(INITIAL_VIRTUAL_SWARMS + x)
-  // dy/dx = K_VALUE/(INITIAL_VIRTUAL_SWARMS + x)^2
-  const price = K_VALUE / Math.pow(INITIAL_VIRTUAL_SWARMS + swarmsAmount, 2);
-  console.log('Price calculation:', {
-    swarmsAmount,
-    price,
-    formula: `${K_VALUE}/(${INITIAL_VIRTUAL_SWARMS} + ${swarmsAmount})^2`,
-    initialVirtualSwarms: INITIAL_VIRTUAL_SWARMS,
-    kValue: K_VALUE
-  });
-  return Math.max(price, 0.000001); // Ensure minimum positive price
+// Add helper function to simulate and get cost
+async function simulatePoolCreationCost(
+  connection: Connection,
+  bondingCurveKeypair: PublicKey,
+  tokenMint: PublicKey,
+): Promise<number> {
+  // Set up pool parameters
+  const baseDecimals = 6; // TOKEN_DECIMALS
+  const quoteDecimals = 9; // SOL decimals
+  const baseAmount = new BN(100).mul(new BN(10 ** baseDecimals)); // 100 base tokens
+  const quoteAmount = new BN(0.001 * 10 ** quoteDecimals); // 0.001 SOL
+
+  // Create simulation transaction
+  const initPoolTx = await AmmImpl.createCustomizablePermissionlessConstantProductPool(
+    connection,
+    bondingCurveKeypair,
+    tokenMint,
+    SWARMS_TOKEN_ADDRESS,
+    baseAmount,
+    quoteAmount,
+    {
+      tradeFeeNumerator: new BN(2500),     // 0.25% fee (2500/10000)
+      tradeFeeDenominator: new BN(10000),  // Setting denominator to 10,000 for percentage-based fees
+      activationType: 1,                    // 1 = Timestamp activation
+      activationPoint: null,                // Will activate immediately since null
+      hasAlphaVault: false,
+      padding: Array(32).fill(0)
+    },
+    {
+      cluster: 'mainnet-beta'
+    }
+  );
+
+  // Add compute budget instruction
+  const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 });
+  initPoolTx.instructions = [modifyComputeUnits, ...initPoolTx.instructions];
+  initPoolTx.feePayer = bondingCurveKeypair;
+
+  // Get latest blockhash
+  const { blockhash } = await connection.getLatestBlockhash('finalized');
+  initPoolTx.recentBlockhash = blockhash;
+
+  // Simulate transaction
+  const simulation = await connection.simulateTransaction(initPoolTx);
+  
+  if (simulation.value.err) {
+    throw new Error(`Pool creation simulation failed: ${JSON.stringify(simulation.value.err)}`);
+  }
+
+  // Calculate required SOL based on simulation
+  const estimatedFee = simulation.value.unitsConsumed 
+    ? (simulation.value.unitsConsumed * 5000) / 10 ** 6  // Assuming default 5000 microlamports per CU
+    : 0.01; // Fallback estimate of 0.01 SOL
+
+  // Add rent exemption costs for any accounts that will be created
+  const rentExempt = await connection.getMinimumBalanceForRentExemption(1024); // Approximate size for pool accounts
+  const totalRentExempt = (rentExempt * 3) / LAMPORTS_PER_SOL; // Multiple accounts might be created
+
+  // Return total cost with buffer
+  return (estimatedFee + totalRentExempt) * POOL_CREATION_BUFFER;
 }
 
-// Calculate tokens for given SWARMS amount using bonding curve formula
-function calculateTokenAmount(swarmsAmount: number): number {
-  // y = INITIAL_TOKEN_SUPPLY - K_VALUE/(INITIAL_VIRTUAL_SWARMS + x)
-  return INITIAL_TOKEN_SUPPLY - (K_VALUE / (INITIAL_VIRTUAL_SWARMS + swarmsAmount));
+export async function GET(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const tokenMint = searchParams.get('tokenMint');
+    const userPublicKey = searchParams.get('userPublicKey');
+
+    if (!tokenMint || !userPublicKey) {
+      return new Response(JSON.stringify({ error: "Missing required parameters" }), { status: 400 });
+    }
+
+    const connection = new Connection(RPC_URL, {
+      commitment: 'confirmed'
+    });
+
+    // Get bonding curve keys from database
+    const { data: bondingCurveKeys, error: keysError } = await supabase
+      .from('bonding_curve_keys')
+      .select('*')
+      .eq('metadata->>mint_address', tokenMint)
+      .maybeSingle();
+
+    if (keysError || !bondingCurveKeys) {
+      throw new Error('Failed to retrieve bonding curve keys');
+    }
+
+    // Get cost estimate
+    const estimatedCost = await simulatePoolCreationCost(
+      connection,
+      new PublicKey(bondingCurveKeys.public_key),
+      new PublicKey(tokenMint)
+    );
+
+    return new Response(JSON.stringify({ 
+      estimatedCost,
+      minimumRequired: estimatedCost,
+      recommendedAmount: estimatedCost * 1.1 // Add 10% extra buffer
+    }), { status: 200 });
+
+  } catch (error) {
+    console.error('Error estimating pool creation cost:', error);
+    return new Response(JSON.stringify({ 
+      error: error instanceof Error ? error.message : "Failed to estimate pool creation cost" 
+    }), { status: 500 });
+  }
 }
 
 export async function POST(req: Request) {
@@ -64,7 +143,8 @@ export async function POST(req: Request) {
     const { 
       userPublicKey,
       tokenMint,
-      swarmsAmount  // Optional additional SWARMS
+      swarmsAmount,  // Optional additional SWARMS
+      createPool     // Flag to indicate if we should create the pool
     } = await req.json();
 
     if (!userPublicKey || !tokenMint) {
@@ -84,253 +164,276 @@ export async function POST(req: Request) {
       .eq('metadata->>mint_address', tokenMint)
       .maybeSingle();
 
-
-    if (keysError) {
-      console.error('Database error when retrieving bonding curve keys:', keysError);
-      throw new Error('Database error when retrieving bonding curve keys');
+    if (keysError || !bondingCurveKeys) {
+      throw new Error('Failed to retrieve bonding curve keys');
     }
-
-    if (!bondingCurveKeys) {
-      console.error('No bonding curve keys found for token:', tokenMint);
-      throw new Error('No bonding curve keys found for this token. Please ensure the token was created properly.');
-    }
-
-    console.log('Found bonding curve key:', bondingCurveKeys.public_key);
 
     // Decrypt private key and create keypair
     const privateKeyBase64 = await decrypt(bondingCurveKeys.encrypted_private_key);
     const privateKey = Buffer.from(privateKeyBase64, 'base64');
     const bondingCurveKeypair = Keypair.fromSecretKey(privateKey);
 
-    // Get all ATAs
-    const userPubkey = new PublicKey(userPublicKey);
-    const bondingCurveSwarmsATA = await getAssociatedTokenAddress(
-      SWARMS_TOKEN_ADDRESS,
-      bondingCurveKeypair.publicKey
-    );
+    // Get token decimals
+    const baseMintAccount = await getMint(connection, new PublicKey(tokenMint));
+    const baseDecimals = baseMintAccount.decimals;
+    const quoteDecimals = TOKEN_DECIMALS; // SWARMS decimals
+
+    // Get bonding curve's token accounts
     const bondingCurveTokenATA = await getAssociatedTokenAddress(
       new PublicKey(tokenMint),
-      bondingCurveKeypair.publicKey
+      bondingCurveKeypair.publicKey,
+      false
     );
 
-    // Create transaction
-    const transaction = new Transaction();
-    transaction.feePayer = userPubkey;
+    const bondingCurveSwarmsATA = await getAssociatedTokenAddress(
+      SWARMS_TOKEN_ADDRESS,
+      bondingCurveKeypair.publicKey,
+      false
+    );
 
-    // Check if ATAs exist and create if needed
-    let needSwarmsATA = false;
-    let needTokenATA = false;
+    // Get token account balances
+    const baseTokenAccount = await connection.getTokenAccountBalance(bondingCurveTokenATA);
+    const quoteTokenAccount = await connection.getTokenAccountBalance(bondingCurveSwarmsATA);
 
-    try {
-      await connection.getTokenAccountBalance(bondingCurveSwarmsATA);
-    } catch (e) {
-      needSwarmsATA = true;
-    }
-
-    try {
-      await connection.getTokenAccountBalance(bondingCurveTokenATA);
-    } catch (e) {
-      needTokenATA = true;
-    }
-
-    // Add ATA creation instructions if needed
-    if (needSwarmsATA) {
-      transaction.add(
-        createAssociatedTokenAccountInstruction(
-          userPubkey,
-          bondingCurveSwarmsATA,
-          bondingCurveKeypair.publicKey,
-          SWARMS_TOKEN_ADDRESS
-        )
-      );
-    }
-
-    if (needTokenATA) {
-      transaction.add(
-        createAssociatedTokenAccountInstruction(
-          userPubkey,
-          bondingCurveTokenATA,
-          bondingCurveKeypair.publicKey,
-          new PublicKey(tokenMint)
-        )
-      );
-    }
-
-    // Get token balances
-    const bondingCurveSwarms = await connection.getTokenAccountBalance(bondingCurveSwarmsATA);
-    console.log('Current bonding curve SWARMS:', bondingCurveSwarms.value.uiAmount);
-
-    const bondingCurveTokens = await connection.getTokenAccountBalance(bondingCurveTokenATA);
-    console.log('Bonding curve token balance:', bondingCurveTokens.value.uiAmount);
-
-    // Verify we have enough tokens for pool
-    if (bondingCurveTokens.value.amount === '0') {
-      throw new Error('No tokens available in bonding curve account');
-    }
-
-    if (bondingCurveSwarms.value.amount === '0' && (!swarmsAmount || Number(swarmsAmount) === 0)) {
-      throw new Error('No SWARMS available and no additional deposit specified');
-    }
-
-    // If user wants to add more SWARMS
-    let additionalAmount = BigInt(0);
-    if (swarmsAmount && Number(swarmsAmount) > 0) {
-      // Verify user has enough SWARMS
-      const userSwarmsATA = await getAssociatedTokenAddress(
-        SWARMS_TOKEN_ADDRESS,
-        userPubkey
-      );
-      
-      try {
-        const userSwarms = await connection.getTokenAccountBalance(userSwarmsATA);
-        if (Number(userSwarms.value.amount) < Number(swarmsAmount) * (10 ** TOKEN_DECIMALS)) {
-          throw new Error(`Insufficient SWARMS balance. Required: ${swarmsAmount}, Available: ${userSwarms.value.uiAmount}`);
-        }
-      } catch (e) {
-        throw new Error('Could not verify SWARMS balance. Please ensure you have enough SWARMS tokens.');
+    console.log('\nToken account balances:', {
+      baseToken: {
+        address: tokenMint,
+        balance: baseTokenAccount.value.amount,
+        uiAmount: baseTokenAccount.value.uiAmount,
+        decimals: baseTokenAccount.value.decimals
+      },
+      quoteToken: {
+        address: SWARMS_TOKEN_ADDRESS.toString(),
+        balance: quoteTokenAccount.value.amount,
+        uiAmount: quoteTokenAccount.value.uiAmount,
+        decimals: quoteTokenAccount.value.decimals
       }
-
-      additionalAmount = BigInt(swarmsAmount) * BigInt(10 ** TOKEN_DECIMALS);
-      const feeAmount = additionalAmount / BigInt(100); // 1% fee
-      const reserveAmount = additionalAmount - feeAmount; // 99% for reserve
-
-      // Get user and pump ATAs
-      const pumpSwarmsATA = await getAssociatedTokenAddress(
-        SWARMS_TOKEN_ADDRESS,
-        SWARMS_PUMP_ADDRESS
-      );
-
-      // Add SWARMS transfer instructions
-      transaction.add(
-        // Transfer 99% to bonding curve
-        createTransferInstruction(
-          userSwarmsATA,
-          bondingCurveSwarmsATA,
-          userPubkey,
-          reserveAmount
-        ),
-        // Transfer 1% fee
-        createTransferInstruction(
-          userSwarmsATA,
-          pumpSwarmsATA,
-          userPubkey,
-          feeAmount
-        )
-      );
-    }
-
-    // Calculate total SWARMS amount (current + additional)
-    const totalSwarmsAmount = BigInt(bondingCurveSwarms.value.amount) + 
-      (additionalAmount > BigInt(0) ? additionalAmount : BigInt(0));
-
-    // Calculate initial price using bonding curve formula
-    const swarmsInPool = Number(totalSwarmsAmount) / (10 ** TOKEN_DECIMALS);
-    const initialPrice = calculatePrice(swarmsInPool);
-    console.log('Pool creation details:', {
-      swarmsInPool,
-      initialPrice,
-      tokensAvailable: calculateTokenAmount(swarmsInPool)
     });
 
+    // Set up pool parameters using actual token balances
+    const baseAmount = new BN(baseTokenAccount.value.amount);
+    const quoteAmount = new BN(quoteTokenAccount.value.amount);
+
+    console.log('\nPool creation parameters:', {
+      baseToken: tokenMint,
+      baseDecimals,
+      baseAmount: baseAmount.toString(),
+      quoteToken: SWARMS_TOKEN_ADDRESS.toString(),
+      quoteDecimals,
+      quoteAmount: quoteAmount.toString(),
+      baseAmountInBN: baseAmount instanceof BN ? 'Valid BN' : 'Not BN',
+      quoteAmountInBN: quoteAmount instanceof BN ? 'Valid BN' : 'Not BN'
+    });
+
+    // Create customization parameters
+    const customizeParam = {
+      tradeFeeNumerator: new BN(2500),     // 0.25% fee (2500/10000)
+      tradeFeeDenominator: new BN(10000),  // Setting denominator to 10,000 for percentage-based fees
+      activationType: 1,                    // 1 = Timestamp activation
+      activationPoint: null,                // Will activate immediately since null
+      hasAlphaVault: false,
+      padding: Array(90).fill(0)           // Required padding (90 bytes as per SDK)
+    };
+
+    console.log('Pool customization parameters:', {
+      tradeFeeNumerator: customizeParam.tradeFeeNumerator.toString(),
+      feePercentage: `${(Number(customizeParam.tradeFeeNumerator) / 10000 * 100).toFixed(4)}%`,
+      activationType: customizeParam.activationType,
+      activationPoint: customizeParam.activationPoint,
+      hasAlphaVault: customizeParam.hasAlphaVault
+    });
+
+    // Create pool initialization transaction
+    const initPoolTx = await AmmImpl.createCustomizablePermissionlessConstantProductPool(
+      connection,
+      bondingCurveKeypair.publicKey,
+      new PublicKey(tokenMint),
+      SWARMS_TOKEN_ADDRESS,
+      baseAmount,
+      quoteAmount,
+      customizeParam,
+      {
+        cluster: 'mainnet-beta'
+      }
+    );
+
+    // Derive and log pool address
+    const poolKey = deriveCustomizablePermissionlessConstantProductPoolAddress(
+      new PublicKey(tokenMint),
+      SWARMS_TOKEN_ADDRESS,
+      createProgram(connection).ammProgram.programId,
+    );
+    console.log('\nExpected pool address:', poolKey.toString());
+
+    // Add compute budget instructions first
+    const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 });
+    const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 });
+    initPoolTx.instructions = [modifyComputeUnits, addPriorityFee, ...initPoolTx.instructions];
+
+    // Set version to legacy for compatibility
+    initPoolTx.feePayer = bondingCurveKeypair.publicKey;
+    
     // Get latest blockhash
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    initPoolTx.recentBlockhash = blockhash;
+    initPoolTx.lastValidBlockHeight = lastValidBlockHeight + 150;
 
-    // Create single transaction for everything
-    const poolTx = new Transaction();
-    poolTx.recentBlockhash = blockhash;
-    poolTx.lastValidBlockHeight = lastValidBlockHeight;
-    poolTx.feePayer = userPubkey;
-
-    // Add compute budget instruction first
-    const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({ 
-      units: 1000000 
-    });
-    poolTx.add(modifyComputeUnits);
-
-    // Get pool creation instructions from SDK
-    const poolKeyData = await Clmm.makeCreatePoolInstructionSimple({
-      connection,
-      makeTxVersion: TxVersion.V0,
-      programId: new PublicKey("CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK"),
-      owner: bondingCurveKeypair.publicKey,
-      payer: userPubkey,
-      mint1: {
-        mint: SWARMS_TOKEN_ADDRESS,
-        decimals: TOKEN_DECIMALS,
-        programId: TOKEN_PROGRAM_ID
-      },
-      mint2: {
-        mint: new PublicKey(tokenMint),
-        decimals: TOKEN_DECIMALS,
-        programId: TOKEN_PROGRAM_ID
-      },
-      ammConfig: {
-        id: new PublicKey("G95xK9bwrunnb4tLZGnHKe9Xj45eHpQxByVGpBHKKbhh"),  // Standard Raydium mainnet config
-        index: 0,
-        protocolFeeRate: 0.0025,  // 0.25% protocol fee
-        tradeFeeRate: 0.0025,     // 0.25% trade fee
-        tickSpacing: 60,          // Standard tick spacing for stable pairs
-        fundFeeRate: 0.01,        // Platform fee
-        fundOwner: SWARMS_PUMP_ADDRESS.toString(),
-        description: "Standard CLMM Pool"
-      },
-      initialPrice: new Decimal(1),  // Start with 1:1 price ratio
-      startTime: new BN(Math.floor(Date.now() / 1000)),
-      computeBudgetConfig: {
-        units: 400000,
-        microLamports: 5000
-      }
+    // Simulate to get cost estimate
+    const simulation = await connection.simulateTransaction(initPoolTx);
+    
+    console.log('\nSimulation results:', {
+      error: simulation.value.err,
+      unitsConsumed: simulation.value.unitsConsumed,
+      logs: simulation.value.logs,
     });
 
-    // Add pool creation instructions
-    for (const ix of poolKeyData.innerTransactions) {
-      ix.instructions.forEach((instruction, index) => {
-        // Log instruction details for debugging
-        console.log(`Instruction ${index}:`, {
-          programId: instruction.programId.toString(),
-          keys: instruction.keys.map(k => ({
-            pubkey: k.pubkey.toString(),
-            isSigner: k.isSigner,
-            isWritable: k.isWritable
-          })),
-          data: instruction.data.length > 0 ? 'Has Data' : 'No Data'
-            });
-            
-        // Only add if it's not a System Program instruction with data
-        if (instruction.programId.equals(SystemProgram.programId) && instruction.data.length > 0) {
-          console.log('Skipping System Program instruction with data');
-          return;
-          }
-          poolTx.add(instruction);
-      });
+    if (simulation.value.err) {
+      throw new Error(`Pool creation simulation failed: ${JSON.stringify(simulation.value.err)}`);
+    }
+    
+    // Calculate estimated fees
+    // Each compute unit costs 5000 microlamports (0.000005 lamports)
+    const estimatedFee = simulation.value.unitsConsumed 
+      ? (simulation.value.unitsConsumed * 5000 / 1_000_000) / LAMPORTS_PER_SOL  // First convert microlamports to lamports, then to SOL
+      : 0.01; // Fallback estimate of 0.01 SOL
+    
+    // Add rent exemption costs for any accounts that will be created
+    // Pool account needs about 165 bytes, token accounts need about 165 bytes each
+    const poolAccountRent = await connection.getMinimumBalanceForRentExemption(165);
+    const tokenAccountRent = await connection.getMinimumBalanceForRentExemption(165);
+    
+    // We need rent for: 1 pool account + 2 token accounts
+    const totalRentExempt = (poolAccountRent + (tokenAccountRent * 2)) / LAMPORTS_PER_SOL;
+
+    // Add 20% buffer for potential congestion
+    const bufferMultiplier = 1.2;
+    const totalRequired = (estimatedFee + totalRentExempt) * bufferMultiplier;
+    const bondingCurveBalance = await connection.getBalance(bondingCurveKeypair.publicKey);
+    const hasEnoughBalance = bondingCurveBalance >= totalRequired * LAMPORTS_PER_SOL;
+
+    // Log the cost breakdown
+    console.log('\nPool creation cost breakdown:', {
+      computeUnits: simulation.value.unitsConsumed,
+      estimatedFee: estimatedFee.toFixed(6),
+      rentExempt: totalRentExempt.toFixed(6),
+      totalRequired: totalRequired.toFixed(6),
+      currentBalance: (bondingCurveBalance / LAMPORTS_PER_SOL).toFixed(6),
+      hasEnoughBalance
+    });
+
+    // If this is just a simulation request
+    if (!createPool) {
+      const costInfo = {
+        bondingCurveAddress: bondingCurveKeypair.publicKey.toString(),
+        estimatedFeeSol: estimatedFee,
+        rentExemptSol: totalRentExempt,
+        recommendedSol: totalRequired,
+        currentBondingCurveBalance: bondingCurveBalance / LAMPORTS_PER_SOL,
+        additionalSolNeeded: Math.max(0, (totalRequired * LAMPORTS_PER_SOL - bondingCurveBalance) / LAMPORTS_PER_SOL),
+        readyToProceed: hasEnoughBalance,
+        simulationStatus: 'Success'
+      };
+
+      return new Response(JSON.stringify(costInfo), { status: 200 });
     }
 
-    // Sign with bonding curve keypair
-    poolTx.partialSign(bondingCurveKeypair);
+    // Check if we have enough balance to proceed
+    if (!hasEnoughBalance) {
+      const additionalSolNeeded = (totalRequired * LAMPORTS_PER_SOL - bondingCurveBalance) / LAMPORTS_PER_SOL;
+      return new Response(JSON.stringify({ 
+        error: `Insufficient SOL balance. Need ${totalRequired.toFixed(4)} SOL but have ${(bondingCurveBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL`,
+        additionalSolNeeded,
+        costBreakdown: {
+          estimatedFee: estimatedFee.toFixed(6),
+          rentExempt: totalRentExempt.toFixed(6),
+          totalRequired: totalRequired.toFixed(6),
+          currentBalance: (bondingCurveBalance / LAMPORTS_PER_SOL).toFixed(6)
+        }
+      }), { status: 402 }); // 402 Payment Required
+    }
 
-    // Log final transaction details
-    console.log('Final transaction:', {
-      recentBlockhash: blockhash,
-      instructions: poolTx.instructions.length,
-      sizeInBytes: poolTx.serialize({ requireAllSignatures: false }).length,
-      instructionTypes: poolTx.instructions.map(ix => ix.programId.toString())
+    // If we have enough SOL, proceed with pool creation
+    console.log('\nProceeding with pool creation...');
+    
+    // Derive the expected pool address before sending transaction
+    const expectedPoolKey = deriveCustomizablePermissionlessConstantProductPoolAddress(
+      new PublicKey(tokenMint),
+      SWARMS_TOKEN_ADDRESS,
+      createProgram(connection).ammProgram.programId,
+    );
+    console.log('Expected pool address:', expectedPoolKey.toString());
+
+    // Sign and send the transaction
+    const signature = await sendAndConfirmTransaction(
+      connection,
+      initPoolTx,
+      [bondingCurveKeypair],
+      {
+        commitment: 'confirmed',
+        maxRetries: 5
+      }
+    );
+
+    // Get the transaction info
+    const txInfo = await connection.getTransaction(signature, {
+      commitment: 'confirmed',
+      maxSupportedTransactionVersion: 0
     });
 
-    // Return transaction for user to sign
-    return new Response(JSON.stringify({ 
-      transaction: poolTx.serialize({ 
-        requireAllSignatures: false,
-        verifySignatures: false 
-      }).toString('base64'),
-      poolKeys: poolKeyData.address,
-      swarmsAmount: totalSwarmsAmount.toString()
-    }), { status: 200 });
+    if (!txInfo?.meta) {
+      throw new Error("Failed to get transaction info");
+    }
+
+    // Check if transaction succeeded (no errors in meta)
+    if (txInfo.meta.err) {
+      throw new Error(`Transaction failed: ${JSON.stringify(txInfo.meta.err)}`);
+    }
+
+    // Since transaction succeeded, use the derived pool address
+    const poolAddress = expectedPoolKey.toString();
+    console.log('Using derived pool address:', poolAddress);
+
+    // Verify the pool exists
+    try {
+      const poolAccount = await connection.getAccountInfo(new PublicKey(poolAddress));
+      if (!poolAccount) {
+        throw new Error("Pool account not found");
+      }
+      console.log('Pool account verified:', poolAddress);
+
+      // Update database with pool creation and pool address
+      const { error: updateError } = await supabase
+        .from('web3agents')
+        .update({
+          metadata: {
+            pool_created_at: new Date().toISOString(),
+            pool_signature: signature,
+            pool_address: poolAddress
+          },
+          pool_address: poolAddress
+        })
+        .eq('mint_address', tokenMint);
+
+      if (updateError) {
+        console.error('Failed to update agent metadata:', updateError);
+        // Don't throw here, as pool was created successfully
+      }
+
+      return new Response(JSON.stringify({ 
+        signature,
+        poolAddress,
+        message: "Pool created successfully"
+      }), { status: 200 });
+
+    } catch (error) {
+      console.error('Failed to verify pool account:', error);
+      throw new Error("Pool creation may have failed - could not verify pool account");
+    }
 
   } catch (error) {
-    console.error('Error creating pool transaction:', error);
-    logger.error("Error creating pool transaction", error as Error);
+    console.error('Error creating pool:', error);
     return new Response(JSON.stringify({ 
-      error: error instanceof Error ? error.message : "Failed to create pool transaction" 
+      error: error instanceof Error ? error.message : "Failed to create pool" 
     }), { status: 500 });
   }
 }
@@ -340,9 +443,7 @@ export async function PUT(req: Request) {
     const { 
       signedTransaction,
       tokenMint,
-      bondingCurveAddress,
-      poolKeys,
-      swarmsAmount
+      vaultAddresses
     } = await req.json();
     
     const connection = new Connection(RPC_URL, {
@@ -350,13 +451,13 @@ export async function PUT(req: Request) {
       confirmTransactionInitialTimeout: 180000
     });
 
-    // Send and confirm the single transaction
+    // Send and confirm transaction
     const tx = Transaction.from(Buffer.from(signedTransaction, 'base64'));
     const signature = await connection.sendRawTransaction(tx.serialize(), {
       skipPreflight: false,
       preflightCommitment: 'confirmed',
       maxRetries: 5
-      });
+    });
 
     // Confirm with retry logic
     let confirmed = false;
@@ -368,11 +469,10 @@ export async function PUT(req: Request) {
           lastValidBlockHeight: tx.lastValidBlockHeight!
         }, 'confirmed');
         
-        if (confirmation.value.err) {
-          throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    if (confirmation.value.err) {
+      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
         }
         confirmed = true;
-        console.log('Transaction confirmed:', signature);
         break;
       } catch (error) {
         if (i === 2) throw error;
@@ -388,29 +488,71 @@ export async function PUT(req: Request) {
     const { error: updateError } = await supabase
       .from('web3agents')
       .update({
-        swarms_reserve: swarmsAmount,
         metadata: {
-          pool_keys: poolKeys,
-          initial_price: INITIAL_TOKEN_SUPPLY,
-          initial_virtual_swarms: INITIAL_VIRTUAL_SWARMS,
-          initial_token_supply: INITIAL_TOKEN_SUPPLY,
-          k_value: K_VALUE
+          vault_addresses: vaultAddresses,
+          created_at: new Date().toISOString()
         }
       })
       .eq('mint_address', tokenMint);
 
     if (updateError) {
-      logger.error("Failed to update agent", updateError);
       throw new Error("Failed to update agent");
     }
 
     return new Response(JSON.stringify({ signature }), { status: 200 });
 
   } catch (error) {
-    console.error('Error processing pool transaction:', error);
-    logger.error("Error processing pool transaction", error as Error);
+    console.error('Error processing vault transaction:', error);
     return new Response(JSON.stringify({ 
-      error: error instanceof Error ? error.message : "Failed to process pool transaction" 
+      error: error instanceof Error ? error.message : "Failed to process vault transaction" 
     }), { status: 500 });
   }
-} 
+}
+
+// Add new endpoint for transferring SOL
+export async function PATCH(req: Request) {
+  try {
+    const { 
+      userPublicKey,
+      bondingCurveAddress,
+      amount  // Amount in lamports
+    } = await req.json();
+
+    if (!userPublicKey || !bondingCurveAddress || !amount) {
+      return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400 });
+    }
+
+    const connection = new Connection(RPC_URL, {
+      commitment: 'confirmed',
+      confirmTransactionInitialTimeout: 180000
+    });
+
+    // Create transfer transaction
+    const transaction = new Transaction();
+    
+    // Add transfer instruction
+    transaction.add(
+      SystemProgram.transfer({
+        fromPubkey: new PublicKey(userPublicKey),
+        toPubkey: new PublicKey(bondingCurveAddress),
+        lamports: amount,
+      })
+    );
+
+    // Get latest blockhash
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = new PublicKey(userPublicKey);
+
+    // Return the transaction for user to sign
+    return new Response(JSON.stringify({ 
+      transaction: transaction.serialize({ requireAllSignatures: false }).toString('base64')
+    }), { status: 200 });
+
+  } catch (error) {
+    console.error('Error creating transfer transaction:', error);
+    return new Response(JSON.stringify({ 
+      error: error instanceof Error ? error.message : "Failed to create transfer transaction" 
+    }), { status: 500 });
+  }
+}

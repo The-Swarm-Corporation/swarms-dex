@@ -7,7 +7,7 @@ import { OrderBook } from '@/components/order-book'
 import { MarketStats } from '@/components/market-stats'
 import { TradingViewChart } from '@/components/trading-view-chart'
 import { TokenTradingPanel } from '@/components/token-trading-panel'
-import { Bot, Users, ArrowLeft } from 'lucide-react'
+import { Bot, Users, ArrowLeft, Loader2 } from 'lucide-react'
 import { MarketService, MarketData } from '@/lib/market'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -15,6 +15,7 @@ import { useAuth } from '@/components/providers/auth-provider'
 import { toast } from 'sonner'
 import { getTokenByMint } from '@/lib/api'
 import type { Web3Agent } from '@/lib/supabase/types'
+import { Button } from '@/components/ui/button'
 
 // Extend TokenDetails from Web3Agent
 interface TokenDetails {
@@ -26,9 +27,10 @@ interface TokenDetails {
   priceChange24h: number
   liquidityPool: number
   poolAddress?: string
-  creator_wallet: string
+  creator_wallet?: string
   metadata?: any
   is_swarm?: boolean
+  bonding_curve_address?: string
 }
 
 export default function TokenPage({ params }: { params: { walletaddress: string } }) {
@@ -37,7 +39,105 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
   const [token, setToken] = useState<TokenDetails | null>(null)
   const [marketData, setMarketData] = useState<MarketData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [creatingPool, setCreatingPool] = useState(false)
   const marketServiceRef = useRef<MarketService | null>(null)
+
+  // Function to handle pool creation
+  const handleCreatePool = async () => {
+    if (!token || !user) return;
+
+    setCreatingPool(true);
+    const toastId = toast.loading("Checking pool requirements...");
+
+    try {
+      // First simulate pool creation to check SOL requirements
+      const poolSimResponse = await fetch('/api/solana/create-pool', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tokenMint: token.mint_address,
+          userPublicKey: user.user_metadata.wallet_address,
+          createPool: false
+        })
+      });
+
+      if (!poolSimResponse.ok) {
+        const error = await poolSimResponse.json();
+        throw new Error(error.error || 'Failed to simulate pool creation');
+      }
+
+      const simResult = await poolSimResponse.json();
+
+      // If we need more SOL, show the transfer UI
+      if (!simResult.readyToProceed) {
+        toast.error(
+          `Pool creation needs ${simResult.recommendedSol.toFixed(4)} SOL. Please send SOL to your bonding curve account.`, 
+          { id: toastId, duration: 8000 }
+        );
+        // Show bonding curve address for easy copy
+        toast.info(
+          <div className="mt-2 text-xs font-mono break-all">
+            <div>Bonding Curve Address:</div>
+            <div>{token.bonding_curve_address}</div>
+          </div>,
+          { duration: 15000 }
+        );
+        return;
+      }
+
+      // If we have enough SOL, proceed with pool creation
+      toast.loading("Creating liquidity pool...", { id: toastId });
+
+      const poolResponse = await fetch('/api/solana/create-pool', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tokenMint: token.mint_address,
+          userPublicKey: user.user_metadata.wallet_address,
+          createPool: true
+        })
+      });
+
+      if (!poolResponse.ok) {
+        const error = await poolResponse.json();
+        throw new Error(error.error || 'Failed to create pool');
+      }
+
+      const { signature: poolSignature, poolAddress } = await poolResponse.json();
+
+      toast.success("Pool created successfully!", { 
+        id: toastId,
+        duration: 5000,
+        description: (
+          <div className="mt-2 text-xs font-mono break-all">
+            <div>Pool: {poolAddress}</div>
+            <div>
+              <a
+                href={`https://explorer.solana.com/tx/${poolSignature}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-500 hover:text-blue-600"
+              >
+                View Transaction
+              </a>
+            </div>
+          </div>
+        ),
+      });
+
+      // Refresh the page to show the new pool
+      router.refresh();
+      
+    } catch (error) {
+      console.error('Failed to create pool:', error);
+      toast.error(
+        error instanceof Error ? error.message : "Failed to create pool", 
+        { id: toastId }
+      );
+    } finally {
+      setCreatingPool(false);
+    }
+  };
 
   useEffect(() => {
     fetchData()
@@ -63,14 +163,17 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
         price: tokenData.current_price || 0,
         priceChange24h: tokenData.price_change_24h || 0,
         liquidityPool: tokenData.market_cap || 0,
-        poolAddress: (tokenData as any).pool_address || undefined,
-        creator_wallet: (tokenData as any).creator_wallet || '',
-        metadata: (tokenData as any).metadata,
-        is_swarm: tokenData.is_swarm
+        poolAddress: tokenData.pool_address,
+        creator_wallet: tokenData.creator_wallet || '',
+        metadata: tokenData.metadata,
+        is_swarm: tokenData.is_swarm,
+        bonding_curve_address: tokenData.bonding_curve_address
       }
       
       if (!tokenDetails.poolAddress) {
         console.warn('No pool address found for token:', tokenData.mint_address);
+      } else {
+        console.log('Found pool address:', tokenDetails.poolAddress);
       }
       
       setToken(tokenDetails)
@@ -125,6 +228,9 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
     )
   }
 
+  const isCreator = user?.user_metadata?.wallet_address === token.creator_wallet;
+  const needsPool = !token.poolAddress && isCreator;
+
   return (
     <div className="space-y-6">
       <Link 
@@ -169,6 +275,28 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
               <span className="text-gray-400">Mint Address: </span>
               <span className="font-mono">{token.mint_address}</span>
             </div>
+            {needsPool && (
+              <div className="mt-4 p-4 bg-red-600/10 rounded-lg border border-red-600/20">
+                <h3 className="text-sm font-semibold text-red-500">Pool Creation Required</h3>
+                <p className="mt-2 text-sm text-gray-200">
+                  Your token needs a liquidity pool to enable trading. Create one now:
+                </p>
+                <Button
+                  onClick={handleCreatePool}
+                  disabled={creatingPool}
+                  className="mt-3 bg-red-600 hover:bg-red-700 text-white"
+                >
+                  {creatingPool ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Creating Pool...
+                    </>
+                  ) : (
+                    "Create Pool"
+                  )}
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -177,7 +305,8 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
           symbol={token.token_symbol}
           currentPrice={token.price}
           poolAddress={token.poolAddress}
-          showCreatePool={!token.poolAddress && user?.user_metadata?.wallet_address === token.creator_wallet}
+          showCreatePool={needsPool}
+          swapsTokenAddress={process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS}
         />
       </div>
 
