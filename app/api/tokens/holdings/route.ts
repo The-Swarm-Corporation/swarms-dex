@@ -51,7 +51,7 @@ export async function GET(req: Request) {
     logger.info("Fetching token holdings", { wallet: walletAddress })
 
     const connection = new Connection(
-      process.env.NEXT_PUBLIC_RPC_URL as string,
+      process.env.RPC_URL as string,
       "confirmed"
     )
 
@@ -82,23 +82,34 @@ export async function GET(req: Request) {
       logger.debug("No SWARMS token account found", { wallet: walletAddress })
     }
 
-    // Fetch all token accounts
+    // Get all token accounts
     const accounts = await connection.getParsedTokenAccountsByOwner(
       publicKey,
       { programId: TOKEN_PROGRAM_ID }
     )
 
+    logger.info("Found token accounts", {
+      count: accounts.value.length,
+      accounts: accounts.value.map(acc => ({
+        mint: acc.account.data.parsed.info.mint,
+        balance: acc.account.data.parsed.info.tokenAmount.uiAmount,
+        ata: acc.pubkey.toString()
+      }))
+    })
+
     // Filter and process accounts
     const holdingsPromises = accounts.value
       .filter((account) => {
-        const balance = account.account.data.parsed.info.tokenAmount
-        return balance.uiAmount > 0 && account.account.data.parsed.info.mint !== SWARMS_TOKEN_MINT
+        const tokenAmount = account.account.data.parsed.info.tokenAmount
+        const mint = account.account.data.parsed.info.mint
+        return tokenAmount.uiAmount > 0 && mint !== SWARMS_TOKEN_MINT
       })
       .map(async (account) => {
         const parsedInfo = account.account.data.parsed.info
         const mintAddress = parsedInfo.mint
-        const balance = parsedInfo.tokenAmount.uiAmount
-        const decimals = parsedInfo.tokenAmount.decimals
+        const tokenAmount = parsedInfo.tokenAmount
+        const balance = tokenAmount.uiAmount || 0
+        const decimals = tokenAmount.decimals
 
         try {
           const agent = await getWeb3AgentByMint(mintAddress)
@@ -106,6 +117,7 @@ export async function GET(req: Request) {
             const currentPrice = agent.current_price || 0
             logger.debug("Found agent token", {
               mint: mintAddress,
+              ata: account.pubkey.toString(),
               symbol: agent.token_symbol,
               balance,
               currentPrice,
@@ -119,10 +131,18 @@ export async function GET(req: Request) {
               currentPrice,
               value: currentPrice * balance
             }
+          } else {
+            logger.debug("No agent found for token", {
+              mint: mintAddress,
+              ata: account.pubkey.toString(),
+              balance,
+              decimals
+            })
           }
         } catch (error) {
           logger.error("Error fetching agent details", error as Error, {
             mintAddress,
+            ata: account.pubkey.toString()
           })
         }
         return null

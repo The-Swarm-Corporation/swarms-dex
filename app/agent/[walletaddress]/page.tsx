@@ -7,7 +7,7 @@ import { OrderBook } from '@/components/order-book'
 import { MarketStats } from '@/components/market-stats'
 import { TradingViewChart } from '@/components/trading-view-chart'
 import { TokenTradingPanel } from '@/components/token-trading-panel'
-import { Bot, Users, ArrowLeft, Loader2, ExternalLink } from 'lucide-react'
+import { Bot, Users, ArrowLeft, Loader2, ExternalLink, Info } from 'lucide-react'
 import { MarketService, MarketData } from '@/lib/market'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -15,6 +15,17 @@ import { useAuth } from '@/components/providers/auth-provider'
 import { toast } from 'sonner'
 import { getTokenByMint } from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { PublicKey, Transaction, Connection } from '@solana/web3.js'
+import { getAssociatedTokenAddress } from '@solana/spl-token'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
 
 interface TokenDetails {
@@ -132,87 +143,179 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
   const [marketData, setMarketData] = useState<MarketData | null>(null)
   const [loading, setLoading] = useState(true)
   const [creatingPool, setCreatingPool] = useState(false)
+  const [additionalSwarms, setAdditionalSwarms] = useState('0')
+  const [showPoolModal, setShowPoolModal] = useState(false)
   const marketServiceRef = useRef<MarketService | null>(null)
 
+  // Function to start pool creation process
+  const startPoolCreation = () => {
+    setShowPoolModal(true);
+  };
+
   const handleCreatePool = async () => {
+    setShowPoolModal(false);
     if (!token || !user) return;
 
     setCreatingPool(true);
     const toastId = toast.loading("Checking pool requirements...");
 
     try {
-      const poolSimResponse = await fetch('/api/solana/create-pool', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tokenMint: token.mint_address,
-          userPublicKey: user.user_metadata.wallet_address,
-          createPool: false
-        })
-      });
+      // If user wants to add more SWARMS, handle the transfer first
+      if (additionalSwarms !== '0') {
+        toast.loading("Checking SWARMS balance...", { id: toastId });
 
-      if (!poolSimResponse.ok) {
-        const error = await poolSimResponse.json();
-        throw new Error(error.error || 'Failed to simulate pool creation');
-      }
-
-      const simResult = await poolSimResponse.json();
-
-      if (!simResult.readyToProceed) {
-        toast.error(
-          `Pool creation needs ${simResult.recommendedSol.toFixed(4)} SOL. Please send SOL to your bonding curve account.`,
-          { id: toastId, duration: 8000 }
+        // Calculate amount (no need to add fee here, API will handle it)
+        const additionalSwarmsBN = Number(additionalSwarms);
+        
+        // Get the user's SWARMS token account
+        const userSwarmsAccount = await getAssociatedTokenAddress(
+          new PublicKey(process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS!),
+          new PublicKey(user.user_metadata.wallet_address)
         );
-        toast.info(
-          <div className="mt-2 text-xs font-mono break-all">
-            <div>Bonding Curve Address:</div>
-            <div>{token.bonding_curve_address}</div>
-          </div>,
-          { duration: 15000 }
+
+        // Get the bonding curve's SWARMS token account
+        const bondingCurveSwarmsAccount = await getAssociatedTokenAddress(
+          new PublicKey(process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS!),
+          new PublicKey(token.bonding_curve_address!)
         );
-        return;
-      }
+        
+        console.log('Requesting SWARMS transfer:', {
+          amount: additionalSwarmsBN,
+          from: user.user_metadata.wallet_address,
+          fromAccount: userSwarmsAccount.toString(),
+          to: token.bonding_curve_address,
+          toAccount: token.bonding_curve_address  // Send to bonding curve main account
+        });
 
-      toast.loading("Creating liquidity pool...", { id: toastId });
+        // Create transfer transaction
+        const transferResponse = await fetch('/api/solana/transfer-swarms', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            walletAddress: user.user_metadata.wallet_address,
+            swarmsAmount: additionalSwarmsBN.toString(),
+            fromAccount: userSwarmsAccount.toString(),
+            toAccount: token.bonding_curve_address  // Send to bonding curve main account
+          })
+        });
 
-      const poolResponse = await fetch('/api/solana/create-pool', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tokenMint: token.mint_address,
-          userPublicKey: user.user_metadata.wallet_address,
-          createPool: true
-        })
-      });
+        if (!transferResponse.ok) {
+          const error = await transferResponse.json();
+          throw new Error(error.error || 'Failed to create transfer transaction');
+        }
 
-      if (!poolResponse.ok) {
-        const error = await poolResponse.json();
-        throw new Error(error.error || 'Failed to create pool');
-      }
+        const { transaction: transferTx } = await transferResponse.json();
+        const tx = Transaction.from(Buffer.from(transferTx, 'base64'));
 
-      const { signature: poolSignature, poolAddress } = await poolResponse.json();
+        // First simulate pool creation to check requirements
+        const poolSimResponse = await fetch('/api/solana/create-pool', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tokenMint: token.mint_address,
+            userPublicKey: user.user_metadata.wallet_address,
+            createPool: false
+          })
+        });
 
-      toast.success("Pool created successfully!", {
-        id: toastId,
-        duration: 5000,
-        description: (
-          <div className="mt-2 text-xs font-mono break-all">
-            <div>Pool: {poolAddress}</div>
-            <div>
-              <a
-                href={`https://explorer.solana.com/tx/${poolSignature}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-500 hover:text-blue-600"
-              >
-                View Transaction
-              </a>
+        if (!poolSimResponse.ok) {
+          const error = await poolSimResponse.json();
+          throw new Error(error.error || 'Failed to simulate pool creation');
+        }
+
+        const simResult = await poolSimResponse.json();
+
+        // If we need more SOL, show the transfer UI
+        if (!simResult.readyToProceed) {
+          toast.error(
+            `Pool creation needs ${simResult.recommendedSol.toFixed(4)} SOL. Please send SOL to your bonding curve account.`, 
+            { id: toastId, duration: 8000 }
+          );
+
+          // Request user to sign the transaction
+          toast.loading("Please sign the SWARMS transfer...", { id: toastId });
+          
+          try {
+            // @ts-ignore - Phantom wallet type
+            const provider = window?.phantom?.solana;
+            if (!provider?.isConnected) {
+              throw new Error('Wallet is not connected');
+            }
+
+            const signedTx = await provider.signTransaction(tx);
+            
+            // Send signed transaction through API
+            const sendResponse = await fetch('/api/solana/transfer-swarms', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                signedTransaction: signedTx.serialize().toString('base64'),
+                walletAddress: user.user_metadata.wallet_address,
+                swarmsAmount: additionalSwarmsBN.toString()
+              })
+            });
+
+            if (!sendResponse.ok) {
+              const error = await sendResponse.json();
+              throw new Error(error.error || 'Failed to send SWARMS transfer');
+            }
+
+            const { signature } = await sendResponse.json();
+            toast.success("SWARMS transfer complete", { id: toastId });
+            
+            toast.loading("Creating pool...", { id: toastId });
+          } catch (error) {
+            if (error instanceof Error && error.message.includes('User rejected')) {
+              throw new Error('SWARMS transfer was rejected by user');
+            }
+            throw new Error('Failed to transfer SWARMS: ' + (error instanceof Error ? error.message : 'Unknown error'));
+          }
+        }
+
+        // Now proceed with pool creation
+        toast.loading("Creating liquidity pool...", { id: toastId });
+
+        // For pool creation, we just need to pass the tokenMint and userPublicKey
+        // The API will use whatever SWARMS are actually in the bonding curve account
+        const poolResponse = await fetch('/api/solana/create-pool', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tokenMint: token.mint_address,
+            userPublicKey: user.user_metadata.wallet_address,
+            createPool: true
+          })
+        });
+
+        if (!poolResponse.ok) {
+          const error = await poolResponse.json();
+          throw new Error(error.error || 'Failed to create pool');
+        }
+
+        const { signature: poolSignature, poolAddress } = await poolResponse.json();
+
+        toast.success("Pool created successfully!", {
+          id: toastId,
+          duration: 5000,
+          description: (
+            <div className="mt-2 text-xs font-mono break-all">
+              <div>Pool: {poolAddress}</div>
+              <div>
+                <a
+                  href={`https://explorer.solana.com/tx/${poolSignature}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-500 hover:text-blue-600"
+                >
+                  View Transaction
+                </a>
+              </div>
             </div>
-          </div>
-        ),
-      });
+          ),
+        });
 
-      router.refresh();
+        router.refresh();
+      }
     } catch (error) {
       console.error('Failed to create pool:', error);
       toast.error(
@@ -408,12 +511,12 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
               <CardContent className="pt-6">
                 <h3 className="text-sm font-semibold text-red-500">Pool Creation Required</h3>
                 <p className="mt-2 text-sm text-gray-200">
-                  Your token needs a liquidity pool to enable trading. Create one now:
+                  Your token needs a liquidity pool to enable trading.
                 </p>
                 <Button
-                  onClick={handleCreatePool}
+                  onClick={startPoolCreation}
                   disabled={creatingPool}
-                  className="mt-3 w-full bg-red-600 hover:bg-red-700 text-white"
+                  className="mt-3 bg-red-600 hover:bg-red-700 text-white"
                 >
                   {creatingPool ? (
                     <>
@@ -428,7 +531,87 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
             </Card>
           )}
         </div>
+
+        <TokenTradingPanel 
+          mintAddress={token.mint_address}
+          symbol={token.token_symbol}
+          currentPrice={token.price}
+          poolAddress={token.poolAddress}
+          showCreatePool={needsPool}
+          swapsTokenAddress={process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS}
+        />
       </div>
+
+      <div className="space-y-6">
+        <TradingViewChart data={marketData} symbol={token.token_symbol} />
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <MarketStats 
+            mintAddress={token.mint_address} 
+            symbol={token.token_symbol} 
+          />
+          <OrderBook 
+            mintAddress={token.mint_address} 
+            symbol={token.token_symbol} 
+          />
+        </div>
+      </div>
+
+      {/* Add Pool Creation Modal */}
+      <Dialog open={showPoolModal} onOpenChange={setShowPoolModal}>
+        <DialogContent className="bg-black/90 border-red-600/20">
+          <DialogHeader>
+            <DialogTitle className="text-red-500 flex items-center gap-2">
+              <Info className="h-5 w-5" />
+              Add More SWARMS Before Pool Creation
+            </DialogTitle>
+            <DialogDescription className="text-gray-200">
+              You can optionally add more SWARMS to your bonding curve account before creating the pool.
+              More SWARMS means more initial liquidity and better trading conditions.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min="0"
+                value={additionalSwarms}
+                onChange={(e) => setAdditionalSwarms(e.target.value)}
+                placeholder="Additional SWARMS amount"
+                className="bg-black/50 border-red-600/20 focus:border-red-600 text-gray-200"
+              />
+              <span className="text-sm text-gray-400">SWARMS</span>
+            </div>
+            <div className="text-xs text-gray-400 space-y-1">
+              <div>Current SWARMS in bonding curve: {token?.metadata?.initial_swarms_amount || "0"}</div>
+              {additionalSwarms !== '0' && (
+                <div className="bg-black/20 p-2 rounded">
+                  <div>+ {additionalSwarms} SWARMS (new deposit)</div>
+                  <div>= {Number(token?.metadata?.initial_swarms_amount || 0) + Number(additionalSwarms)} SWARMS total</div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              onClick={handleCreatePool}
+              disabled={creatingPool}
+              className="w-full bg-red-600 hover:bg-red-700 text-white"
+            >
+              {creatingPool ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {additionalSwarms !== '0' ? 'Transferring SWARMS & Creating Pool...' : 'Creating Pool...'}
+                </>
+              ) : (
+                additionalSwarms !== '0' ? 'Transfer SWARMS & Create Pool' : 'Create Pool'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

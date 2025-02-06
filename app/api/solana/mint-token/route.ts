@@ -1,4 +1,4 @@
-import { Connection, PublicKey, LAMPORTS_PER_SOL, Transaction, SystemProgram, Keypair, TransactionInstruction, SYSVAR_RENT_PUBKEY, SYSVAR_INSTRUCTIONS_PUBKEY, ComputeBudgetProgram } from "@solana/web3.js";
+import { Connection, PublicKey, LAMPORTS_PER_SOL, Transaction, SystemProgram, Keypair, SYSVAR_INSTRUCTIONS_PUBKEY, ComputeBudgetProgram } from "@solana/web3.js";
 import { createClient } from "@supabase/supabase-js";
 import { logger } from "@/lib/logger";
 import { 
@@ -78,10 +78,11 @@ try {
 
 const TOKEN_DECIMALS = 6;
 const INITIAL_SUPPLY = 1_000_000_000; // 1B actual tokens to mint
-const INITIAL_VIRTUAL_SWARMS = 500; // 500 SWARMS virtual reserve
-const VIRTUAL_TOKEN_SUPPLY = 1_073_000_191; // Virtual supply used for calculations
-// Original K value from PUMP.FUN scaled up by (500/30) to maintain same price dynamics
-const K_VALUE = 32_190_005_730 * (500/30); // Scale k value for 500 SWARMS instead of 30 SOL
+const VIRTUAL_TOKEN_SUPPLY = 73_000_191; // Virtual supply used for calculations
+const INITIAL_VIRTUAL_SWARMS = 15000; // 20000 SWARMS virtual reserve
+// Scale k value for 20000 SWARMS to maintain price dynamics
+// Original PUMP.FUN k value scaled for our virtual supply and higher SWARMS reserve
+const K_VALUE = 32_190_005_730 * (VIRTUAL_TOKEN_SUPPLY / 1_073_000_191) * (15000/500);
 const POOL_CREATION_SOL = 0.05; // Fixed amount for pool creation
 
 console.log('Creating SWARMS Token PublicKey...');
@@ -97,7 +98,7 @@ try {
   throw error;
 }
 
-const SWARMS_MINIMUM_BUY_IN = 1;
+const SWARMS_MINIMUM_BUY_IN = 100;
 
 // Increase payload size limit for file uploads
 export const config = {
@@ -116,10 +117,22 @@ async function derivePoolAccount(mint: PublicKey): Promise<[PublicKey, number]> 
 
 // Calculate tokens for given SWARMS amount using PUMP.FUN formula
 function calculateTokenAmount(swarmsAmount: number): number {
-  // Use PUMP.FUN formula but with 500 SWARMS base: y = 1073000191 - (32190005730 * 500/30)/(500+x)
-  const virtualTokens = VIRTUAL_TOKEN_SUPPLY - (K_VALUE / (INITIAL_VIRTUAL_SWARMS + swarmsAmount));
-  // Scale down to actual supply (1B)
-  return (virtualTokens / VIRTUAL_TOKEN_SUPPLY) * INITIAL_SUPPLY;
+  // Prevent division by zero and negative values
+  if (swarmsAmount <= 0) return 0
+  
+  // Calculate virtual balances first
+  const currentVirtualSwarms = INITIAL_VIRTUAL_SWARMS
+  const totalVirtualSwarms = INITIAL_VIRTUAL_SWARMS + swarmsAmount
+  
+  // Calculate tokens using constant product formula: k = x * y
+  const currentVirtualTokens = K_VALUE / currentVirtualSwarms
+  const newVirtualTokens = K_VALUE / totalVirtualSwarms
+  
+  // The difference is how many tokens they receive
+  const virtualTokensToReceive = currentVirtualTokens - newVirtualTokens
+  
+  // Scale down to actual supply and ensure non-negative
+  return Math.max(0, (virtualTokensToReceive / VIRTUAL_TOKEN_SUPPLY) * INITIAL_SUPPLY)
 }
 
 // Add helper function to simulate pool creation cost
