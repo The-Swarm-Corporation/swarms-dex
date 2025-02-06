@@ -1,4 +1,3 @@
-import { PublicKey } from '@solana/web3.js'
 export interface Order {
   id: string
   price: number

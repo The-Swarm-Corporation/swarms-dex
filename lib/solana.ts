@@ -9,9 +9,7 @@ import {
   Signer,
 } from '@solana/web3.js';
 import {
-  createMint,
   getOrCreateAssociatedTokenAccount,
-  mintTo,
   TOKEN_PROGRAM_ID,
   MINT_SIZE,
   createInitializeMintInstruction,
