@@ -92,11 +92,12 @@ try {
 }
 
 const TOKEN_DECIMALS = 6;
-const INITIAL_SUPPLY = 1_000_000_000;
+const INITIAL_SUPPLY = 1_000_000_000; // 1B actual tokens to mint
 const INITIAL_VIRTUAL_SWARMS = 500; // 500 SWARMS virtual reserve
-const INITIAL_TOKEN_SUPPLY = 1_073_000_191; // 1,073,000,191 tokens
-const K_VALUE = INITIAL_TOKEN_SUPPLY * INITIAL_VIRTUAL_SWARMS; // k = initial_supply * initial_virtual_swarms
-const POOL_CREATION_SOL = 0.12; // Fixed amount for pool creation
+const VIRTUAL_TOKEN_SUPPLY = 1_073_000_191; // Virtual supply used for calculations
+// Original K value from PUMP.FUN scaled up by (500/30) to maintain same price dynamics
+const K_VALUE = 32_190_005_730 * (500/30); // Scale k value for 500 SWARMS instead of 30 SOL
+const POOL_CREATION_SOL = 0.05; // Fixed amount for pool creation
 
 console.log('Creating SWARMS Token PublicKey...');
 try {
@@ -130,15 +131,10 @@ async function derivePoolAccount(mint: PublicKey): Promise<[PublicKey, number]> 
 
 // Calculate tokens for given SWARMS amount using PUMP.FUN formula
 function calculateTokenAmount(swarmsAmount: number): number {
-  return INITIAL_TOKEN_SUPPLY - (K_VALUE / (INITIAL_VIRTUAL_SWARMS + swarmsAmount));
-}
-
-// Calculate price for given SWARMS amount
-function calculatePrice(swarmsAmount: number): number {
-  const currentTokens = calculateTokenAmount(swarmsAmount);
-  const nextTokens = calculateTokenAmount(swarmsAmount + 0.000001); // Tiny increment for derivative
-  const priceDelta = 0.000001 / (currentTokens - nextTokens);
-  return priceDelta;
+  // Use PUMP.FUN formula but with 500 SWARMS base: y = 1073000191 - (32190005730 * 500/30)/(500+x)
+  const virtualTokens = VIRTUAL_TOKEN_SUPPLY - (K_VALUE / (INITIAL_VIRTUAL_SWARMS + swarmsAmount));
+  // Scale down to actual supply (1B)
+  return (virtualTokens / VIRTUAL_TOKEN_SUPPLY) * INITIAL_SUPPLY;
 }
 
 // Add helper function to simulate pool creation cost
@@ -255,7 +251,8 @@ export async function POST(req: Request) {
       twitterHandle,
       telegramGroup,
       discordServer,
-      swarmsAmount  // Add SWARMS amount parameter
+      swarmsAmount,
+      priorityFee = 50000    // Default to 50k microlamports
     } = data;
     
     if (!userPublicKey || !tokenName || !tickerSymbol || !image || !swarmsAmount) {
@@ -341,16 +338,43 @@ export async function POST(req: Request) {
       userPubkey
     );
 
-    // Get pump's SWARMS ATA
-    const pumpSwarmsATA = await getAssociatedTokenAddress(
-      SWARMS_TOKEN_ADDRESS,
-      SWARMS_PUMP_ADDRESS
+    // Get user's token ATA
+    const userTokenATA = await getAssociatedTokenAddress(
+      mintKeypair.publicKey,
+      userPubkey,
+      false
     );
 
     // Calculate SWARMS amounts
     const totalAmount = BigInt(swarmsAmount) * BigInt(10 ** TOKEN_DECIMALS);
-    const feeAmount = totalAmount / BigInt(100); // 1% fee
-    const reserveAmount = totalAmount - feeAmount; // 99% for reserve
+    const reserveAmount = totalAmount; // All SWARMS go to bonding curve initially
+
+    // Calculate creator's initial token allocation based on SWARMS amount
+    const creatorTokens = calculateTokenAmount(Number(swarmsAmount));
+    console.log('Token allocation calculation:', {
+      swarmsAmount,
+      creatorTokens,
+      initialSupply: INITIAL_SUPPLY,
+      initialTokenSupply: VIRTUAL_TOKEN_SUPPLY
+    });
+
+    // Convert to BigInt with decimals and ensure we don't exceed total supply
+    const creatorAllocation = BigInt(Math.floor(creatorTokens)) * BigInt(10 ** TOKEN_DECIMALS);
+    const totalSupplyWithDecimals = BigInt(INITIAL_SUPPLY) * BigInt(10 ** TOKEN_DECIMALS);
+    
+    // Ensure bonding curve gets remaining supply
+    const bondingCurveAllocation = totalSupplyWithDecimals - creatorAllocation;
+
+    console.log('Final allocations:', {
+      creatorAllocation: creatorAllocation.toString(),
+      bondingCurveAllocation: bondingCurveAllocation.toString(),
+      totalSupply: totalSupplyWithDecimals.toString()
+    });
+
+    // Verify allocations add up to total supply
+    if (creatorAllocation + bondingCurveAllocation !== totalSupplyWithDecimals) {
+      throw new Error('Token allocation mismatch');
+    }
 
     // Create ATAs
     transaction.add(
@@ -365,35 +389,47 @@ export async function POST(req: Request) {
         bondingCurveSwarmsATA, // ATA address
         bondingCurveKeypair.publicKey, // Owner
         SWARMS_TOKEN_ADDRESS   // Mint
+      ),
+      createAssociatedTokenAccountInstruction(
+        userPubkey,            // Payer
+        userTokenATA,          // ATA address
+        userPubkey,            // Owner
+        mintKeypair.publicKey  // Mint
       )
     );
 
-    // Add SWARMS transfer instructions
+    // Transfer all SWARMS to bonding curve
     transaction.add(
-      // Transfer 99% to bonding curve's SWARMS ATA
       createTransferInstruction(
         userSwarmsATA,
         bondingCurveSwarmsATA,
         userPubkey,
         BigInt(reserveAmount)
-      ),
-      // Transfer 1% fee
-      createTransferInstruction(
-        userSwarmsATA,
-        pumpSwarmsATA,
-        userPubkey,
-        BigInt(feeAmount)
       )
     );
 
-    // Mint initial supply to bonding curve's token ATA
-    const initialSupply = BigInt(INITIAL_SUPPLY) * BigInt(10 ** TOKEN_DECIMALS);
+    // Mint initial supply - split between bonding curve and creator
     transaction.add(
+      // Mint to bonding curve
       createMintToInstruction(
         mintKeypair.publicKey,       // Mint
         bondingCurveTokenATA,        // Destination (bonding curve's ATA)
         mintKeypair.publicKey,       // Mint Authority
-        initialSupply                // Amount
+        bondingCurveAllocation       // Amount
+      ),
+      // Mint to creator
+      createMintToInstruction(
+        mintKeypair.publicKey,       // Mint
+        userTokenATA,                // Destination (creator's ATA)
+        mintKeypair.publicKey,       // Mint Authority
+        creatorAllocation            // Amount
+      ),
+      // Remove mint authority to make supply fixed forever
+      createSetAuthorityInstruction(
+        mintKeypair.publicKey,       // Mint account
+        mintKeypair.publicKey,       // Current authority
+        AuthorityType.MintTokens,    // Authority type to update
+        null                         // New authority (null = remove authority)
       )
     );
 
@@ -434,7 +470,7 @@ export async function POST(req: Request) {
         verified: false,
         share: 100,
       }],
-      primarySaleHappened: false,
+      primarySaleHappened: true,
       isMutable: true,
       tokenStandard: TokenStandard.Fungible,
       collection: null,
@@ -452,17 +488,27 @@ export async function POST(req: Request) {
     });
     console.log("Added metadata")
 
-    // Add compute budget instruction for priority
-    const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 });
-    const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 });
+    // Add compute budget instructions
+    const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }); // Fixed compute limit
+    const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({ 
+      microLamports: priorityFee 
+    });
     transaction.add(modifyComputeUnits, addPriorityFee);
 
-    // Get latest blockhash
-    const { blockhash } = await connection.getLatestBlockhash('finalized');
+    // Get latest blockhash and set a longer validity window
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
     transaction.recentBlockhash = blockhash;
+    // Add 150 blocks to the validity window (roughly ~1-2 minutes extra)
+    transaction.lastValidBlockHeight = lastValidBlockHeight + 150;
 
-    // Partial sign with mint keypair and bonding curve keypair
-    transaction.partialSign(mintKeypair, bondingCurveKeypair);
+    // Sign with required signers:
+    // 1. Mint keypair signs for:
+    //    - Its own account creation
+    //    - As mint authority
+    //    - As metadata authority
+    // 2. Bonding curve keypair signs for:
+    //    - Its own account creation only
+    transaction.sign(mintKeypair, bondingCurveKeypair);
 
     // Store bonding curve keypair in database
     const { error: dbError } = await supabase
@@ -502,21 +548,36 @@ export async function PUT(req: Request) {
 
     const connection = new Connection(RPC_URL, {
       commitment: 'confirmed',
-      confirmTransactionInitialTimeout: 180000
+      confirmTransactionInitialTimeout: 300000  // Increase to 5 minutes
     });
 
-    // Send and confirm transaction
+    // Send and confirm transaction - user has signed their part client-side
     const tx = Transaction.from(Buffer.from(signedTokenTx, 'base64'));
-    
-    // Get fresh blockhash for sending
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
-    tx.recentBlockhash = blockhash;
 
     console.log('Sending transaction with details:', {
       signers: tx.signatures.map(s => ({
         publicKey: s.publicKey.toString(),
         signature: s.signature ? 'signed' : 'unsigned'
-      }))
+      })),
+      blockhash: tx.recentBlockhash,
+      lastValidBlockHeight: tx.lastValidBlockHeight
+    });
+
+    // Simulate transaction first
+    console.log('Simulating transaction...');
+    const simulation = await connection.simulateTransaction(tx);
+    
+    if (simulation.value.err) {
+      console.error('Simulation failed:', {
+        error: simulation.value.err,
+        logs: simulation.value.logs
+      });
+      throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}\nLogs: ${simulation.value.logs?.join('\n')}`);
+    }
+
+    console.log('Simulation successful:', {
+      unitsConsumed: simulation.value.unitsConsumed,
+      logs: simulation.value.logs
     });
 
     // Send with retries
@@ -526,13 +587,15 @@ export async function PUT(req: Request) {
         signature = await connection.sendRawTransaction(tx.serialize(), {
           skipPreflight: false,
           preflightCommitment: 'confirmed',
-          maxRetries: 3
+          maxRetries: 5
         });
+        console.log(`Attempt ${i + 1} successful, signature:`, signature);
         break;
       } catch (error) {
+        console.error(`Send attempt ${i + 1} failed:`, error);
         if (i === 2) throw error;
-        console.log(`Send attempt ${i + 1} failed, retrying...`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        console.log('Retrying in 2 seconds...');
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
 
@@ -542,15 +605,69 @@ export async function PUT(req: Request) {
 
     console.log('Transaction sent:', signature);
 
-    // Confirm with shorter timeout since we have fresh blockhash
-    const confirmation = await connection.confirmTransaction({
-      signature,
-      blockhash,
-      lastValidBlockHeight
-    }, 'confirmed');
+    // Confirm with longer timeout and more retries
+    console.log('Waiting for confirmation...');
+    let confirmed = false;
+    let totalWaitTime = 0;
+    const MAX_WAIT_TIME = 600000; // 10 minutes total max wait
+    const RETRY_INTERVAL = 5000;  // Check every 5 seconds
 
-    if (confirmation.value.err) {
-      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    while (!confirmed && totalWaitTime < MAX_WAIT_TIME) {
+      try {
+        // First try normal confirmation
+        const confirmation = await connection.confirmTransaction({
+          signature,
+          blockhash: tx.recentBlockhash!,
+          lastValidBlockHeight: tx.lastValidBlockHeight!
+        }, 'confirmed');
+
+        console.log('Confirmation attempt result:', {
+          err: confirmation.value.err,
+          slot: confirmation.context.slot
+        });
+
+        if (!confirmation.value.err) {
+          confirmed = true;
+          break;
+        }
+      } catch (error) {
+        // On any error, check transaction status directly
+        console.log('Checking transaction status directly...');
+        const status = await connection.getSignatureStatus(signature);
+        
+        console.log('Transaction status:', {
+          status: status.value?.confirmationStatus,
+          err: status.value?.err,
+          confirmations: status.value?.confirmations
+        });
+
+        if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
+          console.log('Transaction confirmed through status check');
+          confirmed = true;
+          break;
+        }
+
+        if (status.value?.err) {
+          throw new Error(`Transaction failed: ${JSON.stringify(status.value.err)}`);
+        }
+      }
+
+      // Wait before next check
+      await new Promise(resolve => setTimeout(resolve, RETRY_INTERVAL));
+      totalWaitTime += RETRY_INTERVAL;
+      console.log(`Waited ${totalWaitTime/1000} seconds for confirmation...`);
+    }
+
+    if (!confirmed) {
+      // One final status check before giving up
+      const finalStatus = await connection.getSignatureStatus(signature);
+      if (finalStatus.value?.confirmationStatus === 'confirmed' || finalStatus.value?.confirmationStatus === 'finalized') {
+        console.log('Transaction confirmed in final status check');
+        confirmed = true;
+      } else {
+        console.error('Final transaction status:', finalStatus);
+        throw new Error(`Transaction confirmation timed out after ${MAX_WAIT_TIME/1000} seconds. Check status manually with signature: ${signature}`);
+      }
     }
 
     // Create database entry
@@ -574,7 +691,7 @@ export async function PUT(req: Request) {
         metadata: {
           uri: metadata.imageUrl,
           image: metadata.imageUrl,
-          initial_token_supply: INITIAL_TOKEN_SUPPLY,
+          initial_token_supply: VIRTUAL_TOKEN_SUPPLY,
           created_at: new Date().toISOString()
         }
       })

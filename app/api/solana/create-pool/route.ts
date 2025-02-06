@@ -5,7 +5,8 @@ import { logger } from "@/lib/logger";
 import { 
   getAssociatedTokenAddress, 
   TOKEN_PROGRAM_ID,
-  getMint
+  getMint,
+  createTransferInstruction
 } from "@solana/spl-token";
 import { decrypt } from '@/lib/crypto';
 import { AmmImpl } from "@mercurial-finance/dynamic-amm-sdk";
@@ -23,6 +24,7 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 // Initialize PublicKeys
 const SWARMS_TOKEN_ADDRESS = new PublicKey(process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS!);
+const SWARMS_PUMP_ADDRESS = new PublicKey(process.env.NEXT_PUBLIC_SWARMS_PLATFORM_TEST_ADDRESS!);
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } });
 
@@ -195,24 +197,55 @@ export async function POST(req: Request) {
     const baseTokenAccount = await connection.getTokenAccountBalance(bondingCurveTokenATA);
     const quoteTokenAccount = await connection.getTokenAccountBalance(bondingCurveSwarmsATA);
 
-    console.log('\nToken account balances:', {
-      baseToken: {
-        address: tokenMint,
-        balance: baseTokenAccount.value.amount,
-        uiAmount: baseTokenAccount.value.uiAmount,
-        decimals: baseTokenAccount.value.decimals
-      },
-      quoteToken: {
-        address: SWARMS_TOKEN_ADDRESS.toString(),
-        balance: quoteTokenAccount.value.amount,
-        uiAmount: quoteTokenAccount.value.uiAmount,
-        decimals: quoteTokenAccount.value.decimals
-      }
+    // Calculate and transfer 1% fee before pool creation
+    const pumpSwarmsATA = await getAssociatedTokenAddress(
+      SWARMS_TOKEN_ADDRESS,
+      SWARMS_PUMP_ADDRESS,
+      false
+    );
+
+    const swarmsBalance = new BN(quoteTokenAccount.value.amount);
+    const feeAmount = swarmsBalance.divn(100); // 1% fee
+    const remainingAmount = swarmsBalance.sub(feeAmount);
+
+    // Create transaction for fee transfer
+    const feeTx = new Transaction();
+    
+    // Add compute budget instructions
+    const feeComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 });
+    const feePriorityFee = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 });
+    feeTx.add(feeComputeUnits, feePriorityFee);
+
+    // Transfer 1% fee to pump
+    feeTx.add(
+      createTransferInstruction(
+        bondingCurveSwarmsATA,
+        pumpSwarmsATA,
+        bondingCurveKeypair.publicKey,
+        feeAmount.toNumber()
+      )
+    );
+
+    // Send and confirm fee transaction
+    feeTx.feePayer = bondingCurveKeypair.publicKey;
+    feeTx.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
+    
+    const feeTxSignature = await sendAndConfirmTransaction(
+      connection,
+      feeTx,
+      [bondingCurveKeypair],
+      { commitment: 'confirmed' }
+    );
+
+    console.log('Fee transfer complete:', {
+      signature: feeTxSignature,
+      feeAmount: feeAmount.toString(),
+      remainingAmount: remainingAmount.toString()
     });
 
-    // Set up pool parameters using actual token balances
+    // Set up pool parameters using remaining balance after fee
     const baseAmount = new BN(baseTokenAccount.value.amount);
-    const quoteAmount = new BN(quoteTokenAccount.value.amount);
+    const quoteAmount = remainingAmount; // Use remaining amount after fee
 
     console.log('\nPool creation parameters:', {
       baseToken: tokenMint,

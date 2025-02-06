@@ -35,6 +35,7 @@ interface FormData {
   discord: string
   swarmsAmount: string
   image?: File
+  priorityFee: string
 }
 
 const initialFormData: FormData = {
@@ -44,7 +45,8 @@ const initialFormData: FormData = {
   twitter: "",
   telegram: "",
   discord: "",
-  swarmsAmount: "10"
+  swarmsAmount: "10",
+  priorityFee: "50000"
 }
 
 interface FormError {
@@ -658,6 +660,39 @@ export default function CreateAgent() {
               placeholder="discord.gg/..."
               className="bg-black/50 border-red-600/20 focus:border-red-600 text-gray-200"
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="priorityFee" className="text-gray-200">
+              Transaction Priority Fee
+              <span className="ml-2 text-xs text-gray-400">(Optional)</span>
+            </Label>
+            <div className="grid grid-cols-2 gap-4">
+              <Input
+                id="priorityFee"
+                name="priorityFee"
+                type="number"
+                min="0"
+                value={formData.priorityFee}
+                onChange={handleChange}
+                className="bg-black/50 border-red-600/20 focus:border-red-600 text-gray-200"
+              />
+              <select 
+                className="bg-black/50 border border-red-600/20 focus:border-red-600 text-gray-200 rounded-md"
+                onChange={(e) => {
+                  setFormData(prev => ({
+                    ...prev,
+                    priorityFee: e.target.value
+                  }))
+                }}
+              >
+                <option value="50000">Normal (50k)</option>
+                <option value="100000">Fast (100k)</option>
+                <option value="500000">Faster (500k)</option>
+                <option value="1000000">Fastest (1M)</option>
+              </select>
+            </div>
+            <p className="text-xs text-gray-400">Higher priority = faster processing but costs more SOL. Default: 50,000 microLamports.</p>
           </div>
 
           <Button
