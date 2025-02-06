@@ -10,6 +10,7 @@ export interface Web3User {
 }
 
 export interface Web3Agent {
+  volume24h: number
   pool_address: string | undefined
   id: string
   creator_id: string

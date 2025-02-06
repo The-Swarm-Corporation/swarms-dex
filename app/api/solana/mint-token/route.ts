@@ -1,40 +1,25 @@
 import { Connection, PublicKey, LAMPORTS_PER_SOL, Transaction, SystemProgram, Keypair, TransactionInstruction, SYSVAR_RENT_PUBKEY, SYSVAR_INSTRUCTIONS_PUBKEY, ComputeBudgetProgram } from "@solana/web3.js";
 import { createClient } from "@supabase/supabase-js";
-import { createTokenAndMint } from "@/lib/solana/token";
 import { logger } from "@/lib/logger";
 import { 
   getAssociatedTokenAddress, 
   createTransferInstruction, 
   createInitializeMintInstruction,
-  createInitializeAccountInstruction,
   TOKEN_PROGRAM_ID,
   MINT_SIZE,
   createAssociatedTokenAccountInstruction,
   createMintToInstruction,
-  createSetAuthorityInstruction,
-  AuthorityType
 } from "@solana/spl-token";
 import { PinataSDK } from 'pinata-web3';
-import { generateSigner, percentAmount, publicKey, transactionBuilder, keypairIdentity } from '@metaplex-foundation/umi';
-import { createV1, TokenStandard, MPL_TOKEN_METADATA_PROGRAM_ID } from '@metaplex-foundation/mpl-token-metadata';
+import { generateSigner, percentAmount, publicKey, keypairIdentity } from '@metaplex-foundation/umi';
+import { createV1, TokenStandard } from '@metaplex-foundation/mpl-token-metadata';
 import { createUmi } from '@metaplex-foundation/umi-bundle-defaults';
-import { fromWeb3JsInstruction, fromWeb3JsKeypair, fromWeb3JsPublicKey, toWeb3JsInstruction } from '@metaplex-foundation/umi-web3js-adapters';
+import { toWeb3JsInstruction } from '@metaplex-foundation/umi-web3js-adapters';
 import { mplTokenMetadata } from '@metaplex-foundation/mpl-token-metadata';
-import { encrypt, decrypt } from '@/lib/crypto';
-import { 
-  Liquidity,
-  LiquidityPoolKeys,
-  jsonInfo2PoolKeys,
-  LiquidityStateLayout,
-  LIQUIDITY_STATE_LAYOUT_V4,
-  TxVersion,
-  Clmm,
-  ClmmPoolInfo,
-  ClmmConfigInfo
-} from '@raydium-io/raydium-sdk';
-import { RAYDIUM_PROGRAM_ID } from '@/lib/raydium/constants';
+import { encrypt } from '@/lib/crypto';
 import { BN } from '@project-serum/anchor';
 import { AmmImpl } from "@mercurial-finance/dynamic-amm-sdk";
+
 // Debug prints for environment variables
 console.log('ENV CHECK:');
 console.log('DAO_TREASURY:', process.env.NEXT_PUBLIC_DAO_TREASURY_ADDRESS);

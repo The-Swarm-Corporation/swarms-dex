@@ -1,10 +1,7 @@
 import { Connection, PublicKey, Transaction, Keypair, SystemProgram, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { AnchorProvider } from "@project-serum/anchor";
 import { createClient } from "@supabase/supabase-js";
-import { logger } from "@/lib/logger";
 import { 
   getAssociatedTokenAddress, 
-  TOKEN_PROGRAM_ID,
   getMint,
   createTransferInstruction
 } from "@solana/spl-token";

@@ -1,4 +1,4 @@
-import { Connection, PublicKey, LAMPORTS_PER_SOL, Transaction } from "@solana/web3.js";
+import { Connection, PublicKey, Transaction } from "@solana/web3.js";
 import { createClient } from '@supabase/supabase-js';
 import { TokenTrading } from '@/lib/solana/trading';
 import { logger } from '@/lib/logger';
