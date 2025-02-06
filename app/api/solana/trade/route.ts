@@ -4,6 +4,7 @@ import { TokenTrading } from '@/lib/solana/trading';
 import { logger } from '@/lib/logger';
 import AmmImpl from "@mercurial-finance/dynamic-amm-sdk";
 import { BN } from "@project-serum/anchor";
+import { getAssociatedTokenAddress, getAccount } from "@solana/spl-token";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -24,10 +25,46 @@ export async function POST(req: Request) {
     const buyerPubkey = new PublicKey(userPublicKey);
     const amountBigInt = BigInt(amount);
 
+    // Check token balance before proceeding
+    try {
+      const tokenToCheck = action === "buy" ? SWARMS_TOKEN_ADDRESS : tokenMint;
+      const tokenMintPubkey = new PublicKey(tokenToCheck);
+      const tokenAccount = await getAssociatedTokenAddress(tokenMintPubkey, buyerPubkey);
+      
+      try {
+        const accountInfo = await getAccount(connection, tokenAccount);
+        const balance = BigInt(accountInfo.amount.toString());
+        
+        if (balance < amountBigInt) {
+          return new Response(JSON.stringify({ 
+            error: "Insufficient balance",
+            details: {
+              required: amount,
+              balance: balance.toString(),
+              token: action === "buy" ? "SWARMS" : tokenMint
+            }
+          }), { status: 400 });
+        }
+      } catch (error) {
+        // If account doesn't exist or has no balance
+        return new Response(JSON.stringify({ 
+          error: "No token balance found",
+          details: {
+            required: amount,
+            balance: "0",
+            token: action === "buy" ? "SWARMS" : tokenMint
+          }
+        }), { status: 400 });
+      }
+    } catch (error) {
+      logger.error("Failed to check token balance", error as Error);
+      return new Response(JSON.stringify({ error: "Failed to check token balance" }), { status: 400 });
+    }
+
     // Fetch token details from Supabase
     const { data: tokenData } = await supabase
       .from("web3agents")
-      .select("pool_address")
+      .select("pool_address, name")
       .eq("mint_address", tokenMint)
       .single();
 
@@ -50,13 +87,15 @@ export async function POST(req: Request) {
           throw new Error("Failed to initialize Meteora pool");
         }
 
-        // Determine token order (A = SWARMS, B = Agent Token)
-        const isTokenAInput = action === "buy";
-        
+        // For buy: input is SWARMS token, output is agent token
+        // For sell: input is agent token, output is SWARMS token
+        const inputTokenMint = action === "buy" ? swarmsMintPubkey : tokenMintPubkey;
+        const inputAmount = new BN(amountBigInt.toString());
+
         // Get swap quote
-        const { swapOutAmount, minSwapOutAmount } = meteoraPool.getSwapQuote(
-          new BN(amountBigInt.toString()),
-          isTokenAInput,
+        const { minSwapOutAmount, swapOutAmount } = meteoraPool.getSwapQuote(
+          inputTokenMint,
+          inputAmount,
           0.01 // 1% slippage
         );
 
@@ -64,9 +103,9 @@ export async function POST(req: Request) {
         const transaction = new Transaction();
         const swapIx = await meteoraPool.swap(
           buyerPubkey,
-          new BN(amountBigInt.toString()),
-          minSwapOutAmount,
-          isTokenAInput
+          inputTokenMint,
+          inputAmount,
+          minSwapOutAmount
         );
         transaction.add(swapIx);
 
@@ -76,9 +115,19 @@ export async function POST(req: Request) {
         transaction.lastValidBlockHeight = lastValidBlockHeight;
         transaction.feePayer = buyerPubkey;
 
+        // Calculate effective price
+        const price = action === "buy" 
+          ? Number(inputAmount) / Number(swapOutAmount)
+          : Number(swapOutAmount) / Number(inputAmount);
+
         result = {
           transaction,
-          price: Number(swapOutAmount) / Number(amountBigInt)
+          price,
+          inputAmount: inputAmount.toString(),
+          expectedOutputAmount: swapOutAmount.toString(),
+          minimumOutputAmount: minSwapOutAmount.toString(),
+          inputToken: action === "buy" ? "SWARMS" : "Agent Token",
+          outputToken: action === "buy" ? "Agent Token" : "SWARMS"
         };
 
       } else {
@@ -86,33 +135,61 @@ export async function POST(req: Request) {
         const trading = new TokenTrading(connection);
         
         if (action === "buy") {
-          result = await trading.buyTokens(
+          const bondingCurveResult = await trading.buyTokens(
             tokenMint,
             buyerPubkey,
             amountBigInt,
             maxPrice || Number.MAX_VALUE
           );
+
+          result = {
+            transaction: bondingCurveResult.transaction,
+            price: bondingCurveResult.price,
+            inputAmount: amount.toString(),
+            expectedOutputAmount: amountBigInt.toString(),
+            minimumOutputAmount: amountBigInt.toString(),
+            inputToken: "SWARMS",
+            outputToken: tokenData.name
+          };
         } else {
-          result = await trading.sellTokens(
+          const bondingCurveResult = await trading.sellTokens(
             tokenMint,
             buyerPubkey,
             amountBigInt,
             minPrice || 0
           );
+
+          result = {
+            transaction: bondingCurveResult.transaction,
+            price: bondingCurveResult.price,
+            inputAmount: amount.toString(),
+            expectedOutputAmount: (amountBigInt * BigInt(bondingCurveResult.price)).toString(),
+            minimumOutputAmount: (amountBigInt * BigInt(bondingCurveResult.price)).toString(),
+            inputToken: tokenData.name,
+            outputToken: "SWARMS"
+          };
         }
+
       }
 
       logger.info(`${action} order processed`, {
         user: userPublicKey,
         token: tokenMint,
         amount: amount.toString(),
-        price: result.price
+        price: result.price,
+        expectedOutput: result.expectedOutputAmount,
+        minimumOutput: result.minimumOutputAmount
       });
 
       return new Response(JSON.stringify({
         success: true,
         transaction: result.transaction.serialize({ requireAllSignatures: false }).toString("base64"),
-        price: result.price
+        price: result.price,
+        inputAmount: result.inputAmount,
+        expectedOutputAmount: result.expectedOutputAmount,
+        minimumOutputAmount: result.minimumOutputAmount,
+        inputToken: result.inputToken,
+        outputToken: result.outputToken
       }), { status: 200 });
 
     } catch (error) {

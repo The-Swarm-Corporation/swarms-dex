@@ -164,7 +164,9 @@ export function TokenTradingPanel({
       }
 
       setIsLoading(true)
-      const amountBigInt = BigInt(Math.floor(Number.parseFloat(amount) * 1e9))
+      // Use 6 decimals for SWARMS token
+      const decimals = action === "buy" ? 6 : 9;
+      const amountBigInt = BigInt(Math.floor(Number.parseFloat(amount) * Math.pow(10, decimals)))
       const toastId = toast.loading(`Processing ${action} order...`)
 
       try {
@@ -181,15 +183,46 @@ export function TokenTradingPanel({
             action,
             maxPrice: action === "buy" ? currentPrice * (1 + slippage/100) : undefined,
             minPrice: action === "sell" ? currentPrice * (1 - slippage/100) : undefined,
+            decimals, // Pass decimals to API
           }),
         })
 
         if (!response.ok) {
           const error = await response.json()
-          throw new Error(error.error || 'Trade failed')
+          if (error.details) {
+            // Handle insufficient balance error with details
+            const { required, balance, token, decimals: tokenDecimals = 6 } = error.details;
+            toast.error("Insufficient balance", {
+              description: (
+                <div className="mt-2 text-xs font-mono">
+                  <div>Required: {(Number(required) / Math.pow(10, tokenDecimals)).toFixed(6)} {token}</div>
+                  <div>Available: {(Number(balance) / Math.pow(10, tokenDecimals)).toFixed(6)} {token}</div>
+                </div>
+              )
+            });
+          } else {
+            throw new Error(error.error || 'Trade failed')
+          }
+          return;
         }
 
-        const { transaction: serializedTransaction, price } = await response.json()
+        const { transaction: serializedTransaction, price, expectedOutputAmount, minimumOutputAmount, inputToken, outputToken, outputDecimals = 9 } = await response.json()
+        
+        // Show the expected output before asking for signature
+        toast.loading(
+          <div className="space-y-2">
+            <div>Please review the transaction:</div>
+            <div className="font-mono text-xs space-y-1">
+              <div>Input: {(Number(amount)).toFixed(6)} {inputToken}</div>
+              <div>Expected Output: {(Number(expectedOutputAmount) / Math.pow(10, outputDecimals)).toFixed(6)} {outputToken}</div>
+              <div>Minimum Output: {(Number(minimumOutputAmount) / Math.pow(10, outputDecimals)).toFixed(6)} {outputToken}</div>
+              <div>Price: ${price.toFixed(6)}</div>
+              <div>Slippage: {slippage}%</div>
+            </div>
+            <div className="text-xs text-gray-400">Please approve the transaction in your wallet...</div>
+          </div>,
+          { id: toastId }
+        )
         
         // Deserialize the transaction
         const transaction = Transaction.from(Buffer.from(serializedTransaction, 'base64'))
