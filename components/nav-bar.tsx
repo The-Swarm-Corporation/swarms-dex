@@ -8,9 +8,9 @@ import { HoldingsDialog } from './holdings-dialog'
 import { Twitter, DiscIcon as Discord, Send } from 'lucide-react'
 
 const SOCIALS = {
-  twitter: 'https://twitter.com/swarms_corp',
-  discord: 'https://discord.gg/swarms_corp',
-  telegram: 'https://t.me/swarms_corp'
+  twitter: 'https://twitter.com/swarms',
+  discord: 'https://discord.gg/swarms',
+  telegram: 'https://t.me/swarmsgroupchat'
 }
 
 export function NavBar() {
@@ -19,7 +19,7 @@ export function NavBar() {
       <div className="container flex h-16 items-center px-4">
         <Link href="/" className="flex items-center space-x-2">
           <span className="text-2xl font-bold text-red-600">
-            swarms
+            swarms exchange
           </span>
         </Link>
 

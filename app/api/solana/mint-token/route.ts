@@ -423,13 +423,6 @@ export async function POST(req: Request) {
         userTokenATA,                // Destination (creator's ATA)
         mintKeypair.publicKey,       // Mint Authority
         creatorAllocation            // Amount
-      ),
-      // Remove mint authority to make supply fixed forever
-      createSetAuthorityInstruction(
-        mintKeypair.publicKey,       // Mint account
-        mintKeypair.publicKey,       // Current authority
-        AuthorityType.MintTokens,    // Authority type to update
-        null                         // New authority (null = remove authority)
       )
     );
 

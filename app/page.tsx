@@ -142,7 +142,7 @@ export default function Home() {
       <div className="relative -mx-4 -mt-20 px-4 pt-32 pb-16 bg-gradient-to-b from-red-500/10 via-purple-500/5 to-transparent">
         <div className="max-w-4xl mx-auto space-y-4">
           <h1 className="text-5xl sm:text-6xl font-bold tracking-tight">
-            <span className="bg-gradient-to-r from-red-500 via-purple-500 to-blue-500 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-red-500 via-red-400 to-red-500 bg-clip-text text-transparent">
               swarms
             </span>
           </h1>
