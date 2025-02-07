@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { MarketService, MarketData } from '@/lib/market'
 import { Loader2 } from 'lucide-react'
 
 interface MarketStatsProps {
@@ -10,28 +9,59 @@ interface MarketStatsProps {
   symbol: string
 }
 
+interface PoolStats {
+  volume24h: number
+  tvl: number
+  apy: number
+}
+
+interface PoolResponse {
+  pool: {
+    address: string
+    tokenAMint: string
+    tokenBMint: string
+    tokenABalance: string
+    tokenBBalance: string
+    fees: {
+      tradeFee: number
+      ownerTradeFee: number
+      ownerWithdrawFee: number
+    }
+  }
+  stats: PoolStats
+  price: number
+}
+
 export function MarketStats({ mintAddress, symbol }: MarketStatsProps) {
-  const [marketData, setMarketData] = useState<MarketData | null>(null)
+  const [poolData, setPoolData] = useState<PoolResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const marketService = new MarketService(mintAddress)
-        const data = await marketService.getMarketData()
-        setMarketData(data)
+        setLoading(true)
+        // Use the same endpoint as OrderBook
+        const response = await fetch(`/api/solana/meteora/market?mintAddress=${mintAddress}`)
+        
+        if (!response.ok) {
+          throw new Error('Failed to fetch market data')
+        }
+
+        const data = await response.json()
+        setPoolData(data.pool)
       } catch (error) {
-        setError('Failed to load market data')
-        console.error(error)
+        setError('Failed to fetch pool stats')
+        console.error('Failed to fetch pool stats:', error)
       } finally {
         setLoading(false)
       }
     }
 
     fetchData()
-    const interval = setInterval(fetchData, 30000) // Update every 30 seconds
 
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchData, 30000)
     return () => clearInterval(interval)
   }, [mintAddress])
 
@@ -54,38 +84,33 @@ export function MarketStats({ mintAddress, symbol }: MarketStatsProps) {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {marketData ? (
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <div className="text-sm text-gray-400">Price</div>
-              <div className="text-xl font-bold">${marketData.price.toFixed(4)}</div>
+        {loading ? (
+          <div className="text-center text-gray-400">Loading stats...</div>
+        ) : poolData ? (
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <span className="text-gray-400">Price</span>
+              <span className="font-mono font-medium">${(poolData?.price || 0).toFixed(4)}</span>
             </div>
-            <div>
-              <div className="text-sm text-gray-400">24h Volume</div>
-              <div className="text-xl font-bold">
-                ${marketData.volume24h.toLocaleString()}
-              </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-400">24h Volume</span>
+              <span className="font-mono font-medium">${(poolData?.stats?.volume24h || 0).toLocaleString()}</span>
             </div>
-            <div>
-              <div className="text-sm text-gray-400">Market Cap</div>
-              <div className="text-xl font-bold">
-                ${marketData.marketCap.toLocaleString()}
-              </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-400">TVL</span>
+              <span className="font-mono font-medium">${(poolData?.stats?.tvl || 0).toLocaleString()}</span>
             </div>
-            <div>
-              <div className="text-sm text-gray-400">24h Range</div>
-              <div className="text-sm">
-                <span className="text-gray-400">L: </span>
-                <span className="font-mono">${marketData.lowPrice24h.toFixed(4)}</span>
-                <span className="text-gray-400 mx-1">H: </span>
-                <span className="font-mono">${marketData.highPrice24h.toFixed(4)}</span>
-              </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-400">APY</span>
+              <span className="font-mono font-medium">{(poolData?.stats?.apy || 0).toFixed(2)}%</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-400">Pool Fees</span>
+              <span className="font-mono font-medium">{((poolData?.pool?.fees?.tradeFee || 0) / 1000).toFixed(2)}%</span>
             </div>
           </div>
         ) : (
-          <div className="h-[104px] flex items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-red-600" />
-          </div>
+          <div className="text-center text-gray-400">No pool data available</div>
         )}
       </CardContent>
     </Card>

@@ -325,21 +325,6 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
           />
         </div>
       </div>
-
-      <div className="space-y-6">
-        <TradingViewChart data={marketData} symbol={token.token_symbol} />
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <MarketStats 
-            mintAddress={token.mint_address} 
-            symbol={token.token_symbol} 
-          />
-          <OrderBook 
-            mintAddress={token.mint_address} 
-            symbol={token.token_symbol} 
-          />
-        </div>
-      </div>
     </div>
   )
 }
