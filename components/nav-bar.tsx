@@ -1,7 +1,7 @@
 'use client'
 
 import { Button } from "@/components/ui/button"
-import { PlusCircle } from 'lucide-react'
+import { Coins, PlusCircle } from 'lucide-react'
 import Link from "next/link"
 import { WalletButton } from './wallet-button'
 import { HoldingsDialog } from './holdings-dialog'
@@ -12,6 +12,7 @@ const SOCIALS = {
   discord: 'https://discord.gg/swarms',
   telegram: 'https://t.me/swarmsgroupchat'
 }
+// ... existing code ...
 
 export function NavBar() {
   return (
@@ -61,7 +62,15 @@ export function NavBar() {
 
         {/* Desktop Navigation */}
         <div className="hidden md:flex ml-auto items-center space-x-4">
-          <HoldingsDialog />
+          <Link href="/holdings">
+            <Button 
+              variant="outline" 
+              className="border-red-600 hover:bg-red-600/20 text-red-600"
+            >
+              <Coins className="h-4 w-4" />
+              Holdings
+            </Button>
+          </Link>
           <WalletButton />
           <Link href="/create">
             <Button 
@@ -78,7 +87,15 @@ export function NavBar() {
       {/* Mobile Navigation */}
       <div className="md:hidden border-t border-red-600/20">
         <div className="container flex justify-between items-center py-2 px-4">
-          <HoldingsDialog />
+          <Link href="/holdings">
+            <Button 
+              variant="outline" 
+              size="sm"
+              className="border-red-600 hover:bg-red-600/20 text-red-600"
+            >
+              <Coins className="h-4 w-4" />
+            </Button>
+          </Link>
           <WalletButton />
           <Link href="/create">
             <Button 
@@ -94,4 +111,3 @@ export function NavBar() {
     </nav>
   )
 }
-

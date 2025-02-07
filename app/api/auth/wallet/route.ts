@@ -9,7 +9,8 @@ import nacl from "tweetnacl"
 import { logActivity } from '@/lib/supabase/logging'
 import { getClientIp } from '@/lib/utils'
 import { NextRequest } from "next/server"
-import { logger } from '@/lib/logger'
+
+
 
 // Initialize service role client for database operations
 const serviceClient = createClient(
