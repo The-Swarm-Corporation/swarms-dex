@@ -26,22 +26,22 @@ export async function POST(req: Request) {
       try {
         // Get latest valid blockhash for confirmation
         const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
-        
+
         const confirmation = await connection.confirmTransaction({
           signature,
           blockhash,
           lastValidBlockHeight
         }, 'confirmed');
-        
+
         if (confirmation.value.err) {
-          throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-        }
+      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+          }
         
         // Also verify the transaction succeeded
         const txInfo = await connection.getTransaction(signature, {
           commitment: 'confirmed',
           maxSupportedTransactionVersion: 0
-        });
+          });
 
         if (!txInfo) {
           throw new Error('Transaction info not found');

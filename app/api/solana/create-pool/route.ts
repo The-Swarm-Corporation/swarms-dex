@@ -30,7 +30,7 @@ const TOKEN_DECIMALS = 6;
 const POOL_ACCOUNT_SIZE = 180;  // Pool state size
 const LP_MINT_SIZE = 82;       // LP token mint size
 const METADATA_RENT = 0.0151156 * LAMPORTS_PER_SOL;  // Fixed metadata rent
-const BUFFER_MULTIPLIER = 1.1; // 15% buffer for all operations
+const BUFFER_MULTIPLIER = 1.2; // 15% buffer for all operations
 
 // Add helper function to simulate and get cost
 async function simulatePoolCreationCost(
@@ -402,14 +402,28 @@ export async function POST(req: Request) {
 
     // Check for insufficient SOL error
     if (simulation.value.err) {
-      // Check if this is a metadata account creation failure
+      // Calculate total required SOL
+      const totalRequired = (estimatedFee + totalRentExempt / LAMPORTS_PER_SOL) * BUFFER_MULTIPLIER;
+      const currentBalance = bondingCurveBalance / LAMPORTS_PER_SOL;
+      const neededAmount = Math.max(0, totalRequired - currentBalance);
+
+      // Check if this is an insufficient funds error
       const logs = simulation.value.logs || [];
       const isInsufficientFunds = logs.some(log => 
-        log.includes('Transfer: insufficient lamports')
+        log.includes('insufficient lamports') || 
+        log.includes('Transfer: insufficient')
       );
 
       if (isInsufficientFunds) {
-        // Create funding transaction with fixed amount of 0.02 SOL
+        console.log('SOL balance details:', {
+          currentBalance: `${currentBalance.toFixed(6)} SOL`,
+          totalRequired: `${totalRequired.toFixed(6)} SOL`,
+          neededAmount: `${neededAmount.toFixed(6)} SOL`,
+          estimatedFee: `${estimatedFee.toFixed(6)} SOL`,
+          rentExempt: `${(totalRentExempt / LAMPORTS_PER_SOL).toFixed(6)} SOL`
+        });
+
+        // Create funding transaction with exact needed amount
         const fundingTx = new Transaction();
         
         // Add compute budget instructions first
@@ -417,12 +431,12 @@ export async function POST(req: Request) {
         const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 });
         fundingTx.add(modifyComputeUnits, addPriorityFee);
         
-        // Add transfer instruction for 0.02 SOL
+        // Add transfer instruction for exact needed amount
         fundingTx.add(
           SystemProgram.transfer({
             fromPubkey: new PublicKey(userPublicKey),
             toPubkey: bondingCurveKeypair.publicKey,
-            lamports: 0.02 * LAMPORTS_PER_SOL,
+            lamports: Math.ceil(neededAmount * LAMPORTS_PER_SOL),
           })
         );
 
@@ -434,8 +448,16 @@ export async function POST(req: Request) {
         return new Response(JSON.stringify({
           error: "Insufficient SOL for pool creation",
           details: {
-            message: "Please fund the bonding curve with 0.02 SOL to cover pool creation costs",
+            message: `Please fund the bonding curve with ${neededAmount.toFixed(6)} SOL to cover pool creation costs`,
             bondingCurveAddress: bondingCurveKeypair.publicKey.toString(),
+            currentBalance: currentBalance,
+            requiredBalance: totalRequired,
+            neededAmount: neededAmount,
+            breakdown: {
+              estimatedFee,
+              rentExempt: totalRentExempt / LAMPORTS_PER_SOL,
+              buffer: `${((BUFFER_MULTIPLIER - 1) * 100).toFixed(1)}%`
+            }
           },
           transaction: fundingTx.serialize({ requireAllSignatures: false }).toString('base64')
         }), { status: 402 });

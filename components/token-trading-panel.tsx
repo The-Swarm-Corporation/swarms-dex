@@ -238,7 +238,7 @@ export function TokenTradingPanel({
   };
 
   const handlePoolTrade = async (action: "buy" | "sell") => {
-    if (!user || !amount || !connection || !currentPoolAddress) {
+    if (!user || !amount || !connection || !currentPoolAddress || !swapsTokenAddress) {
       toast.error("Please connect your wallet and enter an amount");
       return;
     }
@@ -268,6 +268,7 @@ export function TokenTradingPanel({
           amount: parseFloat(amount),
           action,
           tokenMint: mintAddress,
+          swapsTokenAddress,
           poolAddress: currentPoolAddress,
           slippage,
           priorityFee: Math.floor(gasFee * LAMPORTS_PER_SOL)
@@ -292,10 +293,12 @@ export function TokenTradingPanel({
       const { transaction: serializedTx } = await response.json();
 
       // Sign with Phantom wallet
+      toast.loading("Please approve the transaction...", { id: toastId });
       const tx = Transaction.from(Buffer.from(serializedTx, "base64"));
       const signedTx = await provider.signTransaction(tx);
 
-      // Send signed transaction
+      // Send signed transaction and wait for confirmation
+      toast.loading("Sending and confirming transaction...", { id: toastId });
       const submitResponse = await fetch("/api/solana/trade", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -308,7 +311,11 @@ export function TokenTradingPanel({
         throw new Error("Failed to submit transaction");
       }
 
-      const { signature } = await submitResponse.json();
+      const { signature, confirmed } = await submitResponse.json();
+
+      if (!confirmed) {
+        throw new Error("Transaction failed to confirm");
+      }
 
       toast.success(
         <div>
@@ -321,7 +328,8 @@ export function TokenTradingPanel({
           >
             View on Solscan
           </a>
-        </div>
+        </div>,
+        { id: toastId }
       );
 
       setAmount("");

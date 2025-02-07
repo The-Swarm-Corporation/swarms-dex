@@ -83,7 +83,7 @@ const INITIAL_VIRTUAL_SWARMS = 15000; // 20000 SWARMS virtual reserve
 // Scale k value for 20000 SWARMS to maintain price dynamics
 // Original PUMP.FUN k value scaled for our virtual supply and higher SWARMS reserve
 const K_VALUE = 32_190_005_730 * (VIRTUAL_TOKEN_SUPPLY / 1_073_000_191) * (15000/500);
-const POOL_CREATION_SOL = 0.06; // Fixed amount for pool creation
+const POOL_CREATION_SOL = 0.08; // Fixed amount for pool creation
 
 console.log('Creating SWARMS Token PublicKey...');
 try {
@@ -160,7 +160,7 @@ async function simulatePoolCreationCost(
       activationType: 0,
       activationPoint: null,
       hasAlphaVault: false,
-      padding: Array(32).fill(0)
+      padding: Array(90).fill(0)
     },
     {
       cluster: 'mainnet-beta'
