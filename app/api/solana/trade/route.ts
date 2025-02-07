@@ -1,251 +1,139 @@
-import { Connection, PublicKey, Transaction } from "@solana/web3.js";
-import { createClient } from '@supabase/supabase-js';
-import { TokenTrading } from '@/lib/solana/trading';
-import { logger } from '@/lib/logger';
-import AmmImpl from "@mercurial-finance/dynamic-amm-sdk";
+import { Connection, PublicKey, Transaction, ComputeBudgetProgram } from "@solana/web3.js";
+import { MeteoraService } from "@/lib/meteora/service";
 import { BN } from "@project-serum/anchor";
-import { getAssociatedTokenAddress, getAccount } from "@solana/spl-token";
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } });
 
 const RPC_URL = process.env.RPC_URL as string;
-const SWARMS_TOKEN_ADDRESS = process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS!;
+const TOKEN_DECIMALS = 6;
 
 export async function POST(req: Request) {
   try {
-    const { userPublicKey, tokenMint, amount, action, maxPrice, minPrice } = await req.json();
-    
-    if (!userPublicKey || !tokenMint || !amount || !["buy", "sell"].includes(action)) {
-      return new Response(JSON.stringify({ error: "Invalid Request" }), { status: 400 });
+    const {
+      walletAddress,
+      amount,
+      action,
+      tokenMint,
+      poolAddress,
+      slippage = 1, // Default to 1% slippage
+      priorityFee = 50000 // Default to 50k microlamports
+    } = await req.json();
+
+    if (!walletAddress || !amount || !action || !tokenMint || !poolAddress) {
+      return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400 });
     }
 
-    const connection = new Connection(RPC_URL, "confirmed");
-    const buyerPubkey = new PublicKey(userPublicKey);
-    const amountBigInt = BigInt(amount);
+    const connection = new Connection(RPC_URL, {
+      commitment: 'confirmed'
+    });
 
-    // Check token balance before proceeding
-    try {
-      const tokenToCheck = action === "buy" ? SWARMS_TOKEN_ADDRESS : tokenMint;
-      const tokenMintPubkey = new PublicKey(tokenToCheck);
-      const tokenAccount = await getAssociatedTokenAddress(tokenMintPubkey, buyerPubkey);
-      
-      try {
-        const accountInfo = await getAccount(connection, tokenAccount);
-        const balance = BigInt(accountInfo.amount.toString());
-        
-        if (balance < amountBigInt) {
-          return new Response(JSON.stringify({ 
-            error: "Insufficient balance",
-            details: {
-              required: amount,
-              balance: balance.toString(),
-              token: action === "buy" ? "SWARMS" : tokenMint
-            }
-          }), { status: 400 });
-        }
-      } catch (error) {
-        // If account doesn't exist or has no balance
-        return new Response(JSON.stringify({ 
-          error: "No token balance found",
+    // Initialize Meteora service
+    const meteoraService = new MeteoraService(connection);
+
+    // Get pool info
+    const pool = await meteoraService.getPool(new PublicKey(poolAddress));
+    if (!pool) {
+      throw new Error("Pool not found");
+    }
+
+    // Convert amount to proper decimals
+    const amountInBigInt = BigInt(Math.floor(Number(amount) * Math.pow(10, TOKEN_DECIMALS)));
+    const minAmountOut = BigInt(Math.floor(Number(amount) * Math.pow(10, TOKEN_DECIMALS) * (100 - slippage) / 100));
+
+    // Create swap transaction
+    const swapTx = await meteoraService.swap({
+      poolAddress: new PublicKey(poolAddress),
+      tokenInMint: action === "buy" ? pool.tokenBMint : pool.tokenAMint,
+      tokenOutMint: action === "buy" ? pool.tokenAMint : pool.tokenBMint,
+      amountIn: amountInBigInt,
+      minAmountOut: minAmountOut,
+      userWallet: new PublicKey(walletAddress)
+    });
+
+    // Add compute budget instructions
+    const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 });
+    const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({ 
+      microLamports: priorityFee 
+    });
+    swapTx.instructions = [modifyComputeUnits, addPriorityFee, ...swapTx.instructions];
+
+    // Set fee payer
+    swapTx.feePayer = new PublicKey(walletAddress);
+
+    // Get latest blockhash
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    swapTx.recentBlockhash = blockhash;
+    swapTx.lastValidBlockHeight = lastValidBlockHeight + 150;
+
+    // Simulate transaction to check for errors
+    const simulation = await connection.simulateTransaction(swapTx);
+
+    if (simulation.value.err) {
+      // Check for specific error types
+      const logs = simulation.value.logs || [];
+      const isInsufficientFunds = logs.some(log => 
+        log.includes('Insufficient funds') || 
+        log.includes('insufficient lamports')
+      );
+
+      if (isInsufficientFunds) {
+        // Extract balance info from logs
+        const balanceLog = logs.find(log => log.includes('balance:'));
+        const requiredLog = logs.find(log => log.includes('required:'));
+
+        return new Response(JSON.stringify({
+          error: "Insufficient balance",
           details: {
-            required: amount,
-            balance: "0",
-            token: action === "buy" ? "SWARMS" : tokenMint
+            balance: balanceLog ? parseInt(balanceLog.split('balance:')[1].trim()) : 0,
+            required: requiredLog ? parseInt(requiredLog.split('required:')[1].trim()) : 0,
+            token: action === "buy" ? "SWARMS" : tokenMint,
+            decimals: TOKEN_DECIMALS
           }
         }), { status: 400 });
       }
-    } catch (error) {
-      logger.error("Failed to check token balance", error as Error);
-      return new Response(JSON.stringify({ error: "Failed to check token balance" }), { status: 400 });
+
+      throw new Error(`Swap simulation failed: ${JSON.stringify(simulation.value.err)}`);
     }
 
-    // Fetch token details from Supabase
-    const { data: tokenData } = await supabase
-      .from("web3agents")
-      .select("pool_address, name")
-      .eq("mint_address", tokenMint)
-      .single();
-
-    if (!tokenData) {
-      return new Response(JSON.stringify({ error: "Token not found" }), { status: 404 });
-    }
-
-    try {
-      let result;
-      
-      if (tokenData.pool_address) {
-        // Use Meteora SDK for graduated tokens
-        const poolPublicKey = new PublicKey(tokenData.pool_address);
-        const tokenMintPubkey = new PublicKey(tokenMint);
-        const swarmsMintPubkey = new PublicKey(SWARMS_TOKEN_ADDRESS);
-
-        // Initialize Meteora pool
-        const meteoraPool = await AmmImpl.create(connection, poolPublicKey);
-        if (!meteoraPool) {
-          throw new Error("Failed to initialize Meteora pool");
-        }
-
-        // For buy: input is SWARMS token, output is agent token
-        // For sell: input is agent token, output is SWARMS token
-        const inputTokenMint = action === "buy" ? swarmsMintPubkey : tokenMintPubkey;
-        const inputAmount = new BN(amountBigInt.toString());
-
-        // Get swap quote
-        const { minSwapOutAmount, swapOutAmount } = meteoraPool.getSwapQuote(
-          inputTokenMint,
-          inputAmount,
-          0.01 // 1% slippage
-        );
-
-        // Create swap transaction
-        const transaction = new Transaction();
-        const swapIx = await meteoraPool.swap(
-          buyerPubkey,
-          inputTokenMint,
-          inputAmount,
-          minSwapOutAmount
-        );
-        transaction.add(swapIx);
-
-        // Get latest blockhash
-        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-        transaction.recentBlockhash = blockhash;
-        transaction.lastValidBlockHeight = lastValidBlockHeight;
-        transaction.feePayer = buyerPubkey;
-
-        // Calculate effective price
-        const price = action === "buy" 
-          ? Number(inputAmount) / Number(swapOutAmount)
-          : Number(swapOutAmount) / Number(inputAmount);
-
-        result = {
-          transaction,
-          price,
-          inputAmount: inputAmount.toString(),
-          expectedOutputAmount: swapOutAmount.toString(),
-          minimumOutputAmount: minSwapOutAmount.toString(),
-          inputToken: action === "buy" ? "SWARMS" : "Agent Token",
-          outputToken: action === "buy" ? "Agent Token" : "SWARMS"
-        };
-
-      } else {
-        // Use bonding curve for non-graduated tokens
-        const trading = new TokenTrading(connection);
-        
-        if (action === "buy") {
-          const bondingCurveResult = await trading.buyTokens(
-            tokenMint,
-            buyerPubkey,
-            amountBigInt,
-            maxPrice || Number.MAX_VALUE
-          );
-
-          result = {
-            transaction: bondingCurveResult.transaction,
-            price: bondingCurveResult.price,
-            inputAmount: amount.toString(),
-            expectedOutputAmount: amountBigInt.toString(),
-            minimumOutputAmount: amountBigInt.toString(),
-            inputToken: "SWARMS",
-            outputToken: tokenData.name
-          };
-        } else {
-          const bondingCurveResult = await trading.sellTokens(
-            tokenMint,
-            buyerPubkey,
-            amountBigInt,
-            minPrice || 0
-          );
-
-          result = {
-            transaction: bondingCurveResult.transaction,
-            price: bondingCurveResult.price,
-            inputAmount: amount.toString(),
-            expectedOutputAmount: (amountBigInt * BigInt(bondingCurveResult.price)).toString(),
-            minimumOutputAmount: (amountBigInt * BigInt(bondingCurveResult.price)).toString(),
-            inputToken: tokenData.name,
-            outputToken: "SWARMS"
-          };
-        }
-
-      }
-
-      logger.info(`${action} order processed`, {
-        user: userPublicKey,
-        token: tokenMint,
-        amount: amount.toString(),
-        price: result.price,
-        expectedOutput: result.expectedOutputAmount,
-        minimumOutput: result.minimumOutputAmount
-      });
-
-      return new Response(JSON.stringify({
-        success: true,
-        transaction: result.transaction.serialize({ requireAllSignatures: false }).toString("base64"),
-        price: result.price,
-        inputAmount: result.inputAmount,
-        expectedOutputAmount: result.expectedOutputAmount,
-        minimumOutputAmount: result.minimumOutputAmount,
-        inputToken: result.inputToken,
-        outputToken: result.outputToken
-      }), { status: 200 });
-
-    } catch (error) {
-      logger.error(`${action} order failed`, error as Error);
-      return new Response(JSON.stringify({ 
-        error: error instanceof Error ? error.message : "Trade execution failed" 
-      }), { status: 400 });
-    }
+    // Return serialized transaction
+    return new Response(JSON.stringify({
+      transaction: swapTx.serialize({ requireAllSignatures: false }).toString('base64')
+    }), { status: 200 });
 
   } catch (error) {
-    logger.error("Trade route error", error as Error);
-    return new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 });
+    console.error('Error creating swap transaction:', error);
+    return new Response(JSON.stringify({ 
+      error: error instanceof Error ? error.message : "Failed to create swap transaction" 
+    }), { status: 500 });
   }
 }
 
 export async function PUT(req: Request) {
   try {
-    const { signedTransaction, tokenMint, action } = await req.json();
-    
-    if (!signedTransaction || !tokenMint || !action) {
-      return new Response(JSON.stringify({ error: "Invalid Request" }), { status: 400 });
+    const { signedTransaction } = await req.json();
+
+    if (!signedTransaction) {
+      return new Response(JSON.stringify({ error: "Missing signed transaction" }), { status: 400 });
     }
 
-    const connection = new Connection(RPC_URL, "confirmed");
+    const connection = new Connection(RPC_URL, {
+      commitment: 'confirmed',
+      confirmTransactionInitialTimeout: 60000
+    });
 
-    try {
-      // Deserialize the signed transaction
-      const transaction = Transaction.from(Buffer.from(signedTransaction, 'base64'));
+    // Send signed transaction
+    const tx = Transaction.from(Buffer.from(signedTransaction, 'base64'));
+    const signature = await connection.sendRawTransaction(tx.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+      maxRetries: 5
+    });
 
-      // Send the transaction
-      const signature = await connection.sendRawTransaction(transaction.serialize(), {
-        skipPreflight: false,
-        preflightCommitment: 'confirmed',
-        maxRetries: 3
-      });
-
-      logger.info(`${action} transaction sent`, {
-        token: tokenMint,
-        signature,
-      });
-
-      return new Response(JSON.stringify({
-        success: true,
-        signature
-      }), { status: 200 });
-
-    } catch (error) {
-      logger.error(`Failed to submit ${action} transaction`, error as Error);
-      return new Response(JSON.stringify({ 
-        error: error instanceof Error ? error.message : "Transaction submission failed" 
-      }), { status: 400 });
-    }
+    return new Response(JSON.stringify({ signature }), { status: 200 });
 
   } catch (error) {
-    logger.error("Trade submission error", error as Error);
-    return new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 });
+    console.error('Error submitting swap transaction:', error);
+    return new Response(JSON.stringify({ 
+      error: error instanceof Error ? error.message : "Failed to submit swap transaction" 
+    }), { status: 500 });
   }
 }
   

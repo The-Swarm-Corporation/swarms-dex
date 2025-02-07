@@ -10,6 +10,7 @@ import { logger } from '@/lib/logger'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt } from '@/lib/crypto'
 import { createSwapTokensInstruction } from '@/lib/solana/bonding-curve'
+import { ComputeBudgetProgram } from '@solana/web3.js'
 
 const RPC_URL = process.env.RPC_URL as string
 const SWARMS_TOKEN_ADDRESS = process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS as string
@@ -99,13 +100,43 @@ export async function POST(req: Request) {
       console.log('Not a bonding curve account, proceeding with regular transfer')
       // Regular transfer code continues...
     } else {
-      logger.info('Destination is a bonding curve account, creating swap transaction', {
+      logger.info('Destination is a bonding curve account, creating deposit transaction', {
         bondingCurveAddress: toAccount,
         mintAddress: agentData.mint_address
       })
 
-      // Create swap transaction
-      const swapTx = new Transaction()
+      // Get current SWARMS balance
+      const bondingCurveSwarmsATA = await getAssociatedTokenAddress(
+        new PublicKey(SWARMS_TOKEN_ADDRESS),
+        new PublicKey(toAccount)
+      )
+
+      let currentSwarmsReserve = 0
+      try {
+        const swarmsBalance = await connection.getTokenAccountBalance(bondingCurveSwarmsATA)
+        currentSwarmsReserve = Number(swarmsBalance.value.amount) / (10 ** TOKEN_DECIMALS)
+      } catch {
+        // ATA doesn't exist yet, currentSwarmsReserve stays 0
+      }
+
+      // Calculate amounts with 6 decimals
+      const totalAmount = BigInt(swarmsAmount) * BigInt(10 ** TOKEN_DECIMALS)
+      const feeAmount = totalAmount * BigInt(1) / BigInt(100) // 1% fee
+      const depositAmount = totalAmount - feeAmount // 99% for deposit
+
+      // Calculate tokens to receive based on bonding curve
+      const tokensToReceive = calculateTokenAmount(
+        currentSwarmsReserve,
+        Number(depositAmount) / (10 ** TOKEN_DECIMALS)
+      )
+
+      // Create deposit transaction
+      const depositTx = new Transaction()
+
+      // Add compute budget instructions
+      const computeUnits = ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 })
+      const priorityFee = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 })
+      depositTx.add(computeUnits, priorityFee)
 
       // Get bonding curve keys for private key
       const { data: bondingCurveData, error: bondingCurveError } = await supabase
@@ -123,103 +154,23 @@ export async function POST(req: Request) {
       const privateKey = Buffer.from(privateKeyBase64, 'base64')
       const bondingCurveKeypair = Keypair.fromSecretKey(privateKey)
 
-      // Get bonding curve's SWARMS ATA
-      const bondingCurveSwarmsATA = await getAssociatedTokenAddress(
-        new PublicKey(SWARMS_TOKEN_ADDRESS),
-        bondingCurveKeypair.publicKey
-      )
-
-      // Create bonding curve's SWARMS ATA if it doesn't exist
-      try {
-        await connection.getTokenAccountBalance(bondingCurveSwarmsATA)
-      } catch {
-        const createAtaIx = createAssociatedTokenAccountInstruction(
-          userPublicKey,  // fee payer
-          bondingCurveSwarmsATA,
-          bondingCurveKeypair.publicKey,
-          new PublicKey(SWARMS_TOKEN_ADDRESS)
-        )
-        swapTx.add(createAtaIx)
-      }
-
-      // Get current SWARMS balance
-      const swarmsBalance = await connection.getTokenAccountBalance(bondingCurveSwarmsATA)
-      const currentSwarmsReserve = Number(swarmsBalance.value.amount) / (10 ** TOKEN_DECIMALS)
-
-      // Get bonding curve's token ATA
-      const bondingCurveTokenATA = await getAssociatedTokenAddress(
-        new PublicKey(agentData.mint_address),
-        bondingCurveKeypair.publicKey
-      )
-
-      // Create bonding curve's token ATA if it doesn't exist
-      try {
-        await connection.getTokenAccountBalance(bondingCurveTokenATA)
-      } catch {
-        const createAtaIx = createAssociatedTokenAccountInstruction(
-          userPublicKey,  // fee payer
-          bondingCurveTokenATA,
-          bondingCurveKeypair.publicKey,
-          new PublicKey(agentData.mint_address)
-        )
-        swapTx.add(createAtaIx)
-      }
-
-      // Get current token balance
-      const tokenBalance = await connection.getTokenAccountBalance(bondingCurveTokenATA)
-      const currentTokenReserve = Number(tokenBalance.value.amount) / (10 ** TOKEN_DECIMALS)
-
-      // Get user's token ATA
+      // Get user's token account
       const userTokenATA = await getAssociatedTokenAddress(
         new PublicKey(agentData.mint_address),
         userPublicKey
       )
 
-      // Calculate amounts with 6 decimals
-      const totalAmount = BigInt(swarmsAmount) * BigInt(10 ** TOKEN_DECIMALS)
-      const feeAmount = totalAmount * BigInt(1) / BigInt(100) // 1% fee
-      const swapAmount = totalAmount - feeAmount // 99% for swap
-
-      // Calculate token allocation based on current SWARMS reserve and new amount
-      const tokensToReceive = calculateTokenAmount(
-        currentSwarmsReserve,
-        Number(swapAmount) / (10 ** TOKEN_DECIMALS)
+      // Get bonding curve's token account
+      const bondingCurveTokenATA = await getAssociatedTokenAddress(
+        new PublicKey(agentData.mint_address),
+        bondingCurveKeypair.publicKey
       )
-
-      // Calculate price diagnostics
-      const pricePerToken = Number(swapAmount) / (tokensToReceive * (10 ** TOKEN_DECIMALS))
-      const effectivePrice = (Number(swapAmount) / (10 ** TOKEN_DECIMALS)) / tokensToReceive
-      const virtualPrice = K_VALUE / (INITIAL_VIRTUAL_SWARMS + currentSwarmsReserve) ** 2
-
-      console.log('Bonding curve pricing diagnostics:', {
-        currentSwarmsReserve,
-        currentTokenReserve,
-        additionalSwarms: Number(swapAmount) / (10 ** TOKEN_DECIMALS),
-        tokensToReceive,
-        pricePerToken,
-        effectivePrice,
-        virtualPrice,
-        kValue: K_VALUE,
-        initialVirtualSwarms: INITIAL_VIRTUAL_SWARMS,
-        virtualTokenSupply: VIRTUAL_TOKEN_SUPPLY,
-        initialSupply: INITIAL_SUPPLY,
-        swapDetails: {
-          totalSwarms: Number(totalAmount) / (10 ** TOKEN_DECIMALS),
-          fee: Number(feeAmount) / (10 ** TOKEN_DECIMALS),
-          netSwarms: Number(swapAmount) / (10 ** TOKEN_DECIMALS)
-        }
-      })
-
-      // Verify bonding curve has enough tokens
-      if (tokensToReceive > currentTokenReserve) {
-        throw new Error(`Insufficient token balance in bonding curve. Required: ${tokensToReceive}, Available: ${currentTokenReserve}`)
-      }
 
       // Create user's token ATA if it doesn't exist
       try {
         await connection.getTokenAccountBalance(userTokenATA)
       } catch {
-        swapTx.add(
+        depositTx.add(
           createAssociatedTokenAccountInstruction(
             userPublicKey,
             userTokenATA,
@@ -236,7 +187,7 @@ export async function POST(req: Request) {
         true
       )
 
-      swapTx.add(
+      depositTx.add(
         createTransferInstruction(
           fromTokenAccount,
           pumpTokenAccount,
@@ -245,18 +196,18 @@ export async function POST(req: Request) {
         )
       )
 
-      // Add transfer instruction for SWARMS to bonding curve
-      swapTx.add(
+      // Add deposit instruction for SWARMS
+      depositTx.add(
         createTransferInstruction(
           fromTokenAccount,
-          bondingCurveSwarmsATA,  // Send to bonding curve's SWARMS token account
+          bondingCurveSwarmsATA,
           userPublicKey,
-          Number(swapAmount)
+          Number(depositAmount)
         )
       )
 
-      // Add transfer instruction for tokens from bonding curve
-      swapTx.add(
+      // Add token transfer from bonding curve to user
+      depositTx.add(
         createTransferInstruction(
           bondingCurveTokenATA,
           userTokenATA,
@@ -265,69 +216,36 @@ export async function POST(req: Request) {
         )
       )
 
-      // Add memo instruction to show token amount in Phantom
-      swapTx.add(
+      // Add memo instruction to show amounts in Phantom
+      depositTx.add(
         new TransactionInstruction({
           keys: [],
           programId: new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'),
-          data: Buffer.from(`Swap ${swarmsAmount} SWARMS for ${tokensToReceive.toFixed(4)} ${agentData.token_symbol} @ ${effectivePrice.toFixed(6)} SWARMS/token`)
+          data: Buffer.from(`Deposit ${Number(depositAmount) / (10 ** TOKEN_DECIMALS)} SWARMS for ${tokensToReceive.toFixed(6)} ${agentData.token_symbol} (Fee: ${Number(feeAmount) / (10 ** TOKEN_DECIMALS)} SWARMS)`)
         })
       )
 
-      swapTx.feePayer = userPublicKey
+      depositTx.feePayer = userPublicKey
 
-      // Get fresh blockhash
+      // Get fresh blockhash before signing
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('processed')
       const adjustedLastValidBlockHeight = lastValidBlockHeight + 1500
       
-      swapTx.recentBlockhash = blockhash
-      swapTx.lastValidBlockHeight = adjustedLastValidBlockHeight
+      depositTx.recentBlockhash = blockhash
+      depositTx.lastValidBlockHeight = adjustedLastValidBlockHeight
 
-      // Sign with bonding curve keypair
-      swapTx.partialSign(bondingCurveKeypair)
-
-      // Log transaction details before serializing
-      console.log('Transaction setup:', {
-        instructions: swapTx.instructions.map((ix, index) => ({
-          index,
-          programId: ix.programId.toString(),
-          keys: ix.keys.map(k => ({
-            pubkey: k.pubkey.toString(),
-            isSigner: k.isSigner,
-            isWritable: k.isWritable
-          }))
-        })),
-        signers: swapTx.signatures.map(s => ({
-          publicKey: s.publicKey.toString(),
-          signature: s.signature ? 'present' : 'missing'
-        }))
-      })
+      // Sign with bonding curve keypair for token transfer
+      depositTx.partialSign(bondingCurveKeypair)
 
       // Serialize the transaction
-      const serializedTx = swapTx.serialize({ requireAllSignatures: false }).toString('base64')
+      const serializedTx = depositTx.serialize({ requireAllSignatures: false }).toString('base64')
 
-      // Add detailed console log
-      console.log('Swap transaction details:', {
+      logger.info('Deposit transaction created', {
         from: fromAccount,
         to: toAccount,
         totalAmount: Number(totalAmount) / (10 ** TOKEN_DECIMALS),
         feeAmount: Number(feeAmount) / (10 ** TOKEN_DECIMALS),
-        swapAmount: Number(swapAmount) / (10 ** TOKEN_DECIMALS),
-        currentSwarmsReserve,
-        currentTokenReserve,
-        tokensToReceive,
-        effectivePrice,
-        pricePerToken
-      })
-
-      logger.info('Swap transaction created', {
-        from: fromAccount,
-        to: toAccount,
-        totalAmount: Number(totalAmount) / (10 ** TOKEN_DECIMALS),
-        feeAmount: Number(feeAmount) / (10 ** TOKEN_DECIMALS),
-        swapAmount: Number(swapAmount) / (10 ** TOKEN_DECIMALS),
-        currentSwarmsReserve,
-        currentTokenReserve,
+        depositAmount: Number(depositAmount) / (10 ** TOKEN_DECIMALS),
         tokensToReceive,
         validUntilBlock: adjustedLastValidBlockHeight
       })
@@ -338,14 +256,12 @@ export async function POST(req: Request) {
         details: {
           totalAmount: Number(totalAmount) / (10 ** TOKEN_DECIMALS),
           feeAmount: Number(feeAmount) / (10 ** TOKEN_DECIMALS),
-          swapAmount: Number(swapAmount) / (10 ** TOKEN_DECIMALS),
-          currentSwarmsReserve,
-          currentTokenReserve,
+          transferAmount: Number(depositAmount) / (10 ** TOKEN_DECIMALS),
           tokensToReceive,
           from: fromAccount,
           to: toAccount,
           platformAddress: pumpTokenAccount.toString(),
-          isSwap: true
+          isDeposit: true
         }
       })
     }
@@ -365,6 +281,11 @@ export async function POST(req: Request) {
     // Create transfer transaction
     const transferTx = new Transaction()
 
+    // Add compute budget instructions
+    const computeUnits = ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 })
+    const priorityFee = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 })
+    transferTx.add(computeUnits, priorityFee)
+
     // Add 1% fee transfer to platform
     transferTx.add(
       createTransferInstruction(
@@ -383,6 +304,15 @@ export async function POST(req: Request) {
         userPublicKey,
         Number(transferAmount) // Convert BigInt to number for the instruction
       )
+    )
+
+    // Add memo instruction to show amounts in Phantom
+    transferTx.add(
+      new TransactionInstruction({
+        keys: [],
+        programId: new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'),
+        data: Buffer.from(`Transfer ${Number(transferAmount) / (10 ** 6)} SWARMS (Fee: ${Number(feeAmount) / (10 ** 6)} SWARMS)`)
+      })
     )
 
     transferTx.feePayer = userPublicKey
@@ -446,28 +376,58 @@ export async function PUT(req: Request) {
       // Deserialize the signed transaction
       const tx = Transaction.from(Buffer.from(signedTransaction, 'base64'))
       
-      // Send the transaction
+      // Send the transaction without modifying blockhash
       const signature = await connection.sendRawTransaction(tx.serialize(), {
         skipPreflight: false,
         preflightCommitment: 'processed',
         maxRetries: 3
       })
 
-      // Get latest blockhash for confirmation
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('processed')
+      logger.info('Transaction sent to network', { signature })
 
-      // Wait for confirmation using the latest blockhash
-      const confirmation = await connection.confirmTransaction({
-        signature,
-        blockhash,
-        lastValidBlockHeight
-      }, 'processed')
+      // Wait for confirmation with retries using getSignatureStatus
+      let confirmed = false
+      let retries = 0
+      const maxRetries = 10
+      const maxAttempts = 30
+      let attempts = 0
 
-      if (confirmation.value.err) {
-        throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`)
+      while (!confirmed && retries < maxRetries && attempts < maxAttempts) {
+        try {
+          // Wait a bit before checking status
+          await new Promise(resolve => setTimeout(resolve, 1000))
+          attempts++
+
+          const status = await connection.getSignatureStatus(signature)
+          
+          if (status.value?.err) {
+            throw new Error(`Transaction failed: ${JSON.stringify(status.value.err)}`)
+          }
+
+          if (status.value?.confirmationStatus === 'processed' || 
+              status.value?.confirmationStatus === 'confirmed' || 
+              status.value?.confirmationStatus === 'finalized') {
+            confirmed = true
+            logger.info('Transfer transaction confirmed', { 
+              signature,
+              confirmationStatus: status.value.confirmationStatus 
+            })
+            break
+          }
+
+        } catch (error) {
+          retries++
+          if (retries === maxRetries) {
+            throw error
+          }
+          // Wait before retrying
+          await new Promise(resolve => setTimeout(resolve, 2000))
+        }
       }
 
-      logger.info('Transfer transaction confirmed', { signature })
+      if (!confirmed) {
+        throw new Error('Transaction confirmation timeout')
+      }
 
       return NextResponse.json({ signature })
 

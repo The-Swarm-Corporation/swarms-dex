@@ -16,7 +16,7 @@ import { createV1, TokenStandard } from '@metaplex-foundation/mpl-token-metadata
 import { createUmi } from '@metaplex-foundation/umi-bundle-defaults';
 import { toWeb3JsInstruction } from '@metaplex-foundation/umi-web3js-adapters';
 import { mplTokenMetadata } from '@metaplex-foundation/mpl-token-metadata';
-import { encrypt } from '@/lib/crypto';
+import { encrypt, decrypt } from '@/lib/crypto';
 import { BN } from '@project-serum/anchor';
 import { AmmImpl } from "@mercurial-finance/dynamic-amm-sdk";
 
@@ -83,7 +83,7 @@ const INITIAL_VIRTUAL_SWARMS = 15000; // 20000 SWARMS virtual reserve
 // Scale k value for 20000 SWARMS to maintain price dynamics
 // Original PUMP.FUN k value scaled for our virtual supply and higher SWARMS reserve
 const K_VALUE = 32_190_005_730 * (VIRTUAL_TOKEN_SUPPLY / 1_073_000_191) * (15000/500);
-const POOL_CREATION_SOL = 0.05; // Fixed amount for pool creation
+const POOL_CREATION_SOL = 0.06; // Fixed amount for pool creation
 
 console.log('Creating SWARMS Token PublicKey...');
 try {
@@ -661,6 +661,87 @@ export async function PUT(req: Request) {
       }
     }
 
+    // After token creation is confirmed, create the pool
+    console.log('Creating liquidity pool...');
+    
+    // Get the bonding curve keypair from database
+    const { data: bondingCurveData, error: bcError } = await supabase
+      .from('bonding_curve_keys')
+      .select('encrypted_private_key')
+      .eq('public_key', bondingCurveAddress)
+      .single();
+
+    if (bcError || !bondingCurveData) {
+      throw new Error('Failed to retrieve bonding curve keypair');
+    }
+
+    // Decrypt the private key
+    const privateKeyBase64 = await decrypt(bondingCurveData.encrypted_private_key);
+    const bondingCurveKeypair = Keypair.fromSecretKey(Buffer.from(privateKeyBase64, 'base64'));
+
+    // Set up pool parameters
+    const baseDecimals = TOKEN_DECIMALS;
+    const quoteDecimals = TOKEN_DECIMALS;
+    const baseAmount = new BN(100_000).mul(new BN(10 ** baseDecimals));
+    const quoteAmount = new BN(100).mul(new BN(10 ** quoteDecimals));
+
+    // Create pool transaction
+    const initPoolTx = await AmmImpl.createCustomizablePermissionlessConstantProductPool(
+      connection,
+      bondingCurveKeypair.publicKey,
+      new PublicKey(tokenMint),
+      SWARMS_TOKEN_ADDRESS,
+      baseAmount,
+      quoteAmount,
+      {
+        tradeFeeNumerator: new BN(30),
+        activationType: 0,
+        activationPoint: null,
+        hasAlphaVault: false,
+        padding: Array(32).fill(0)
+      },
+      {
+        cluster: 'mainnet-beta'
+      }
+    );
+
+    // Add compute budget instruction for pool creation
+    const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 });
+    initPoolTx.instructions = [modifyComputeUnits, ...initPoolTx.instructions];
+    initPoolTx.feePayer = bondingCurveKeypair.publicKey;
+
+    // Get latest blockhash for pool transaction
+    const { blockhash: poolBlockhash } = await connection.getLatestBlockhash('finalized');
+    initPoolTx.recentBlockhash = poolBlockhash;
+
+    // Sign and send pool transaction
+    initPoolTx.sign(bondingCurveKeypair);
+    
+    console.log('Sending pool creation transaction...');
+    const poolSignature = await connection.sendRawTransaction(initPoolTx.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+      maxRetries: 5
+    });
+
+    console.log('Pool creation transaction sent:', poolSignature);
+
+    // Wait for pool creation confirmation
+    const poolConfirmation = await connection.confirmTransaction({
+      signature: poolSignature,
+      blockhash: poolBlockhash,
+      lastValidBlockHeight: await connection.getBlockHeight() + 150
+    }, 'confirmed');
+
+    if (poolConfirmation.value.err) {
+      throw new Error(`Pool creation failed: ${JSON.stringify(poolConfirmation.value.err)}`);
+    }
+
+    console.log('Pool creation confirmed');
+
+    // Get pool address
+    const [poolAddress] = await derivePoolAccount(new PublicKey(tokenMint));
+
     // Create database entry
     const { data: agent, error: agentError } = await supabase
       .from("web3agents")
@@ -670,6 +751,7 @@ export async function PUT(req: Request) {
         token_symbol: metadata.tickerSymbol,
         mint_address: tokenMint,
         bonding_curve_address: bondingCurveAddress,
+        pool_address: poolAddress.toString(),
         graduated: false,
         creator_wallet: userPublicKey,
         created_at: new Date(),
@@ -698,15 +780,19 @@ export async function PUT(req: Request) {
       .from('bonding_curve_keys')
       .update({ 
         agent_id: agent.id,
-        token_signature: signature
+        token_signature: signature,
+        pool_signature: poolSignature,
+        pool_address: poolAddress.toString()
       })
       .eq('public_key', bondingCurveAddress);
 
     return new Response(JSON.stringify({ 
       success: true,
       signature,
+      poolSignature,
       tokenMint,
       bondingCurveAddress,
+      poolAddress: poolAddress.toString(),
       agentId: agent.id
     }), { status: 200 });
 
