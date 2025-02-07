@@ -1,4 +1,4 @@
-import { Connection, PublicKey, Transaction, Keypair, SystemProgram, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { Connection, PublicKey, Transaction, Keypair, SystemProgram, LAMPORTS_PER_SOL, TransactionInstruction } from "@solana/web3.js";
 import { createClient } from "@supabase/supabase-js";
 import { 
   getAssociatedTokenAddress, 
@@ -426,12 +426,7 @@ export async function POST(req: Request) {
         // Create funding transaction with exact needed amount
         const fundingTx = new Transaction();
         
-        // Add compute budget instructions first
-        const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 });
-        const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 });
-        fundingTx.add(modifyComputeUnits, addPriorityFee);
-        
-        // Add transfer instruction for exact needed amount
+        // Add transfer instruction
         fundingTx.add(
           SystemProgram.transfer({
             fromPubkey: new PublicKey(userPublicKey),
@@ -440,7 +435,7 @@ export async function POST(req: Request) {
           })
         );
 
-        // Get latest blockhash
+        // Get latest blockhash and set fee payer
         const { blockhash } = await connection.getLatestBlockhash('finalized');
         fundingTx.recentBlockhash = blockhash;
         fundingTx.feePayer = new PublicKey(userPublicKey);
@@ -456,7 +451,6 @@ export async function POST(req: Request) {
             breakdown: {
               estimatedFee,
               rentExempt: totalRentExempt / LAMPORTS_PER_SOL,
-              buffer: `${((BUFFER_MULTIPLIER - 1) * 100).toFixed(1)}%`
             }
           },
           transaction: fundingTx.serialize({ requireAllSignatures: false }).toString('base64')

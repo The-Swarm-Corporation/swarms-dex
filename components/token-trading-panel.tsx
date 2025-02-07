@@ -564,58 +564,104 @@ export function TokenTradingPanel({
         }
 
         // Check for insufficient SOL error
-        if (poolData.error?.includes('Insufficient SOL')) {
+        if (poolResponse.status === 402) {
           const { details, transaction: fundingTx } = poolData;
           if (!details || !fundingTx) {
             throw new Error('Failed to get funding transaction');
           }
           
-          toast.loading(`Additional SOL needed for pool creation (${details.additionalSolNeeded.toFixed(6)} SOL)...`, { id: toastId });
+          const {
+            currentBalance,
+            requiredBalance,
+            neededAmount,
+            breakdown
+          } = details;
+
+          // Add extra SOL for the transfer transaction itself
+          const transferGasFee = 0.000005; // Base gas fee for transfer
+          const totalNeeded = neededAmount + transferGasFee;
+
+          toast.loading(
+            <div className="space-y-2">
+              <div>Additional SOL needed for pool creation:</div>
+              <div className="text-xs font-mono bg-black/20 p-2 rounded space-y-1">
+                <div>Current: {currentBalance.toFixed(6)} SOL</div>
+                <div>Required: {requiredBalance.toFixed(6)} SOL</div>
+                <div>Needed: {totalNeeded.toFixed(6)} SOL</div>
+                <div className="text-gray-400">Breakdown:</div>
+                <div className="pl-2">
+                  <div>• Network Fee: {breakdown.estimatedFee.toFixed(6)} SOL</div>
+                  <div>• Rent: {breakdown.rentExempt.toFixed(6)} SOL</div>
+                </div>
+              </div>
+            </div>,
+            { id: toastId, duration: 10000 }
+          );
 
           // Sign the prepared transaction
           const tx = Transaction.from(Buffer.from(fundingTx, 'base64'));
-          const signedTx = await provider.signTransaction(tx);
-
-          // Submit the signed transaction
-          const submitResponse = await fetch('/api/solana/create-pool', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              signedTransaction: signedTx.serialize().toString('base64')
-            })
-          });
-
-          if (!submitResponse.ok) {
-            throw new Error('Failed to submit SOL transfer');
-          }
-
-          const { signature } = await submitResponse.json();
-
-          toast.success("SOL transfer complete", {
-            id: toastId,
-            description: (
-              <div className="mt-2 text-xs font-mono">
-                <div>Transferred {details.additionalSolNeeded.toFixed(6)} SOL</div>
-                <div>
-                  <a
-                    href={`https://solscan.io/tx/${signature}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-500 hover:text-blue-600"
-                  >
-                    View transaction
-                  </a>
-                </div>
-              </div>
-            )
-          });
-
-          // Wait a bit for the transaction to settle
-          await new Promise(resolve => setTimeout(resolve, 2000));
           
-          // Retry pool creation
-          handleCreatePool();
-          return;
+          try {
+            const signedTx = await provider.signTransaction(tx);
+
+            // Submit the signed transaction
+            const submitResponse = await fetch('/api/solana/create-pool', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                signedTransaction: signedTx.serialize().toString('base64')
+              })
+            });
+
+            if (!submitResponse.ok) {
+              throw new Error('Failed to submit SOL transfer');
+            }
+
+            const { signature } = await submitResponse.json();
+
+            // Wait for confirmation
+            const confirmResponse = await fetch('/api/solana/confirm-transaction', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ signature })
+            });
+
+            if (!confirmResponse.ok) {
+              throw new Error('Failed to confirm SOL transfer');
+            }
+
+            toast.success("SOL transfer complete", {
+              id: toastId,
+              description: (
+                <div className="mt-2 text-xs font-mono">
+                  <div>Transferred {totalNeeded.toFixed(6)} SOL</div>
+                  <div>
+                    <a
+                      href={`https://solscan.io/tx/${signature}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-500 hover:text-blue-600"
+                    >
+                      View transaction
+                    </a>
+                  </div>
+                </div>
+              )
+            });
+
+            // Wait a bit for the transaction to settle
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Retry pool creation
+            handleCreatePool();
+            return;
+          } catch (error) {
+            if (error instanceof Error && error.message.includes('User rejected')) {
+              toast.error("SOL transfer rejected", { id: toastId });
+              return;
+            }
+            throw error;
+          }
         }
 
         throw new Error(poolData.error || 'Failed to create pool');
