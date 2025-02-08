@@ -30,6 +30,8 @@ interface TokenTradingPanelProps {
   showCreatePool?: boolean
   bondingCurveAddress?: string
   initialSwarmsAmount?: string
+  onTradingStateChange?: (isTrading: boolean) => void
+  onPoolCreated?: (poolAddress: string) => void
 }
 
 export function TokenTradingPanel({
@@ -40,7 +42,9 @@ export function TokenTradingPanel({
   poolAddress: initialPoolAddress,
   showCreatePool = false,
   bondingCurveAddress,
-  initialSwarmsAmount = "0"
+  initialSwarmsAmount = "0",
+  onTradingStateChange,
+  onPoolCreated
 }: TokenTradingPanelProps) {
   const { connection } = useSolana()
   const { user } = useAuth()
@@ -137,23 +141,24 @@ export function TokenTradingPanel({
       return;
     }
 
-    const walletAddress = user.user_metadata?.wallet_address;
-    if (!walletAddress) {
-      toast.error("Wallet address not found");
-      return;
-    }
-
-    // @ts-ignore - Phantom wallet type
-    const provider = window?.phantom?.solana;
-    if (!provider?.isPhantom) {
-      toast.error("Please install Phantom wallet");
-      return;
-    }
-
+    onTradingStateChange?.(true);
     setIsLoading(true);
     const toastId = toast.loading("Preparing bonding curve swap...");
 
     try {
+      const walletAddress = user.user_metadata?.wallet_address;
+      if (!walletAddress) {
+        toast.error("Wallet address not found");
+        return;
+      }
+
+      // @ts-ignore - Phantom wallet type
+      const provider = window?.phantom?.solana;
+      if (!provider?.isPhantom) {
+        toast.error("Please install Phantom wallet");
+        return;
+      }
+
       // Get user's token accounts
       const userTokenAccount = await getAssociatedTokenAddress(
         new PublicKey(mintAddress),
@@ -231,35 +236,43 @@ export function TokenTradingPanel({
 
     } catch (error) {
       console.error("Bonding curve swap failed:", error);
-      toast.error(error instanceof Error ? error.message : "Swap failed", { id: toastId });
+      toast.error(error instanceof Error ? error.message : "Swap failed");
     } finally {
       setIsLoading(false);
+      onTradingStateChange?.(false);
     }
   };
 
-  const handlePoolTrade = async (action: "buy" | "sell") => {
-    if (!user || !amount || !connection || !currentPoolAddress || !swapsTokenAddress) {
-      toast.error("Please connect your wallet and enter an amount");
-      return;
-    }
-
-    const walletAddress = user.user_metadata?.wallet_address;
-    if (!walletAddress) {
-      toast.error("Wallet address not found");
-      return;
-    }
-
-    // @ts-ignore - Phantom wallet type
-    const provider = window?.phantom?.solana;
-    if (!provider?.isPhantom) {
-      toast.error("Please install Phantom wallet");
-      return;
-    }
-
-    setIsLoading(true);
-    const toastId = toast.loading("Preparing pool trade...");
-
+  const handlePoolTrade = async (action: "buy" | "sell", e?: React.MouseEvent) => {
     try {
+      // Prevent any form submission or event bubbling
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      
+      if (!user || !amount || !connection || !currentPoolAddress || !swapsTokenAddress) {
+        toast.error("Please connect your wallet and enter an amount");
+        return;
+      }
+
+      onTradingStateChange?.(true);
+      setIsLoading(true);
+      const toastId = toast.loading("Preparing pool trade...");
+
+      const walletAddress = user.user_metadata?.wallet_address;
+      if (!walletAddress) {
+        toast.error("Wallet address not found");
+        return;
+      }
+
+      // @ts-ignore - Phantom wallet type
+      const provider = window?.phantom?.solana;
+      if (!provider?.isPhantom) {
+        toast.error("Please install Phantom wallet");
+        return;
+      }
+
       const response = await fetch("/api/solana/trade", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -285,8 +298,8 @@ export function TokenTradingPanel({
           toast.error(
             `Insufficient ${token} balance. Required: ${formattedRequired}, Available: ${formattedBalance}`
           );
-          return;
-        }
+        return;
+      }
         throw new Error(error.error || "Failed to create transaction");
       }
 
@@ -316,7 +329,7 @@ export function TokenTradingPanel({
       if (!confirmed) {
         throw new Error("Transaction failed to confirm");
       }
-
+      
       toast.success(
         <div>
           Pool trade successful!{" "}
@@ -333,21 +346,22 @@ export function TokenTradingPanel({
       );
 
       setAmount("");
-
+      
     } catch (error) {
       console.error("Pool trade failed:", error);
-      toast.error(error instanceof Error ? error.message : "Trade failed", { id: toastId });
+      toast.error(error instanceof Error ? error.message : "Trade failed");
     } finally {
       setIsLoading(false);
+      onTradingStateChange?.(false);
     }
   };
 
   const handleCreatePool = async () => {
-      try {
+    try {
       if (!connection) {
         toast.error("Connection not initialized")
         return
-        }
+      }
 
       if (!user) {
         toast.error("Please connect your wallet to create pool")
@@ -360,10 +374,11 @@ export function TokenTradingPanel({
         return
       }
 
+      onTradingStateChange?.(true);
       setIsLoading(true)
       const toastId = toast.loading("Initializing pool creation...")
 
-    try {
+      try {
         // Add robust wallet detection with retries
         let provider;
         let retries = 0;
@@ -383,8 +398,8 @@ export function TokenTradingPanel({
           }
           
           if (retries === maxRetries - 1) {
-      try {
-        // @ts-ignore - Phantom wallet type
+            try {
+              // @ts-ignore - Phantom wallet type
               provider = window?.phantom?.solana;
               if (provider?.isPhantom) {
                 await provider.connect();
@@ -393,8 +408,8 @@ export function TokenTradingPanel({
               throw new Error('Phantom wallet not found');
             } catch (e) {
               toast.error("Please install Phantom wallet or check if it's properly connected");
-          return;
-        }
+              return;
+            }
           }
           
           retries++;
@@ -460,10 +475,10 @@ export function TokenTradingPanel({
           const submitResponse = await fetch('/api/solana/transfer-swarms', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+            body: JSON.stringify({
               signedTransaction: signedTx.serialize().toString('base64')
             })
-      });
+          });
 
           if (!submitResponse.ok) {
             throw new Error('Failed to submit SWARMS transfer');
@@ -489,23 +504,23 @@ export function TokenTradingPanel({
             description: (
               <div className="mt-2 text-xs font-mono">
                 <div>Transferred {additionalSwarms} SWARMS</div>
-          <div>
-            <a
+                <div>
+                  <a
                     href={`https://solscan.io/tx/${signature}`}
-              target="_blank"
-              rel="noopener noreferrer"
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="text-blue-500 hover:text-blue-600"
-            >
+                  >
                     View transaction
-            </a>
-          </div>
+                  </a>
+                </div>
               </div>
             )
           });
 
           // Short delay before proceeding to pool creation
           await new Promise(resolve => setTimeout(resolve, 1000));
-      }
+        }
 
         // Proceed with pool creation
         toast.loading("Creating liquidity pool...", { id: toastId });
@@ -559,7 +574,15 @@ export function TokenTradingPanel({
             wallet_address: walletAddress,
           });
 
-          window.location.reload();
+          // Update local state
+          setCurrentPoolAddress(poolAddress);
+          setPool({ address: new PublicKey(poolAddress) });
+          setAdditionalSwarms('0');
+          setAmount('');
+          setShowPoolModal(false);
+          
+          // Notify parent component
+          onPoolCreated?.(poolAddress);
           return;
         }
 
@@ -667,7 +690,7 @@ export function TokenTradingPanel({
         throw new Error(poolData.error || 'Failed to create pool');
       } catch (error) {
         console.error('Pool creation failed:', error);
-        toast.error(error instanceof Error ? error.message : "Failed to create pool", { id: toastId });
+        toast.error(error instanceof Error ? error.message : "Failed to create pool");
         
         // Log the error
         await logActivity({
@@ -684,9 +707,30 @@ export function TokenTradingPanel({
       }
     } finally {
       setIsLoading(false);
+      onTradingStateChange?.(false);
       setShowPoolModal(false);
     }
   };
+
+  useEffect(() => {
+    // Prevent form submissions within the trading panel
+    const handleFormSubmit = (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    };
+
+    const forms = document.querySelectorAll('form');
+    forms.forEach(form => {
+      form.addEventListener('submit', handleFormSubmit, true);
+    });
+
+    return () => {
+      forms.forEach(form => {
+        form.removeEventListener('submit', handleFormSubmit, true);
+      });
+    };
+  }, []);
 
   return (
     <Card className="bg-black/50 border-red-600/20">
@@ -699,7 +743,15 @@ export function TokenTradingPanel({
             {showCreatePool ? (
               <>
                 <p className="text-sm text-gray-400">No liquidity pool exists for this token yet. As the token creator, you can create one to enable trading.</p>
-                <div className="space-y-4">
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return false;
+                  }} 
+                  className="space-y-4" 
+                  noValidate
+                >
                   <div className="pt-4">
                       <Label>Additional SWARMS (Optional)</Label>
                       <Input
@@ -707,6 +759,13 @@ export function TokenTradingPanel({
                         placeholder="Enter additional SWARMS amount"
                         value={additionalSwarms}
                         onChange={(e) => setAdditionalSwarms(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            return false;
+                          }
+                        }}
                         className="bg-black/50 border-red-600/20 focus:border-red-600 mt-2"
                       />
                       <div className="text-xs text-gray-400 space-y-1 mt-2">
@@ -719,7 +778,13 @@ export function TokenTradingPanel({
                         )}
                       </div>
                     <Button
-                      onClick={handleCreatePool}
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleCreatePool();
+                        return false;
+                      }}
                       disabled={isLoading}
                       className="w-full mt-4 bg-red-600 hover:bg-red-700"
                     >
@@ -733,138 +798,213 @@ export function TokenTradingPanel({
                       )}
                     </Button>
                   </div>
-                </div>
+                </form>
               </>
             ) : (
               <p className="text-sm text-gray-400">No liquidity pool has been established for this token yet. Trading will be enabled once the token creator creates a pool.</p>
             )}
           </div>
         ) : (
-          <Tabs defaultValue="buy">
-            <TabsList className="grid w-full grid-cols-2 bg-black/50">
-              <TabsTrigger value="buy" className="data-[state=active]:bg-red-600">Buy</TabsTrigger>
-              <TabsTrigger value="sell" className="data-[state=active]:bg-gray-600">Sell</TabsTrigger>
-            </TabsList>
-            <TabsContent value="buy">
-              <div className="space-y-4 pt-4">
-                <div className="space-y-2">
-                  <Label>Amount (SWARMS)</Label>
-                  <Input
-                    type="number"
-                    placeholder="Enter SWARMS amount"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="bg-black/50 border-red-600/20 focus:border-red-600"
-                  />
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <p className="text-xs text-gray-400">Slippage:</p>
-                      <div className="flex items-center gap-1">
-                        <Input
-                          type="number"
-                          value={slippage}
-                          onChange={handleSlippageChange}
-                          className="w-16 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
-                          min="0.1"
-                          max="100"
-                          step="0.1"
-                        />
-                        <span className="text-xs text-gray-400">%</span>
+          <form 
+            onSubmit={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              return false;
+            }} 
+            noValidate 
+            className="w-full"
+          >
+            <Tabs defaultValue="buy" onValueChange={() => setAmount("")}>
+              <TabsList className="grid w-full grid-cols-2 bg-black/50">
+                <TabsTrigger 
+                  type="button"
+                  value="buy" 
+                  className="data-[state=active]:bg-red-600"
+                >
+                  Buy
+                </TabsTrigger>
+                <TabsTrigger 
+                  type="button"
+                  value="sell" 
+                  className="data-[state=active]:bg-gray-600"
+                >
+                  Sell
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="buy">
+                <div className="space-y-4 pt-4">
+                  <div className="space-y-2">
+                    <Label>Amount (SWARMS)</Label>
+                    <Input
+                      type="number"
+                      placeholder="Enter SWARMS amount"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          return false;
+                        }
+                      }}
+                      className="bg-black/50 border-red-600/20 focus:border-red-600"
+                    />
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs text-gray-400">Slippage:</p>
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="number"
+                            value={slippage}
+                            onChange={handleSlippageChange}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                return false;
+                              }
+                            }}
+                            className="w-16 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
+                            min="0.1"
+                            max="100"
+                            step="0.1"
+                          />
+                          <span className="text-xs text-gray-400">%</span>
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <p className="text-xs text-gray-400">Gas (SOL):</p>
-                      <div className="flex items-center gap-1">
-                        <Input
-                          type="number"
-                          value={gasFee}
-                          onChange={handleGasFeeChange}
-                          className="w-24 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
-                          min="0.000005"
-                          step="0.000001"
-                        />
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs text-gray-400">Gas (SOL):</p>
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="number"
+                            value={gasFee}
+                            onChange={handleGasFeeChange}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                return false;
+                              }
+                            }}
+                            className="w-24 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
+                            min="0.000005"
+                            step="0.000001"
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
+                  <Button
+                    type="button"
+                    className="w-full bg-red-600 hover:bg-red-700"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handlePoolTrade("buy", e);
+                      return false;
+                    }}
+                    disabled={isLoading}
+                  >
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Processing...
+                      </>
+                    ) : (
+                      `Buy ${symbol} with SWARMS`
+                    )}
+                  </Button>
                 </div>
-                <Button
-                  className="w-full bg-red-600 hover:bg-red-700"
-                  onClick={() => handlePoolTrade("buy")}
-                  disabled={isLoading}
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Processing...
-                    </>
-                  ) : (
-                    `Buy ${symbol} with SWARMS`
-                  )}
-                </Button>
-              </div>
-            </TabsContent>
-            <TabsContent value="sell">
-              <div className="space-y-4 pt-4">
-                <div className="space-y-2">
-                  <Label>Amount ({symbol})</Label>
-                  <Input
-                    type="number"
-                    placeholder={`Enter ${symbol} amount`}
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="bg-black/50 border-gray-600/20 focus:border-gray-600"
-                  />
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <p className="text-xs text-gray-400">Slippage:</p>
-                      <div className="flex items-center gap-1">
-                        <Input
-                          type="number"
-                          value={slippage}
-                          onChange={handleSlippageChange}
-                          className="w-16 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
-                          min="0.1"
-                          max="100"
-                          step="0.1"
-                        />
-                        <span className="text-xs text-gray-400">%</span>
+              </TabsContent>
+              <TabsContent value="sell">
+                <div className="space-y-4 pt-4">
+                  <div className="space-y-2">
+                    <Label>Amount ({symbol})</Label>
+                    <Input
+                      type="number"
+                      placeholder={`Enter ${symbol} amount`}
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          return false;
+                        }
+                      }}
+                      className="bg-black/50 border-gray-600/20 focus:border-gray-600"
+                    />
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs text-gray-400">Slippage:</p>
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="number"
+                            value={slippage}
+                            onChange={handleSlippageChange}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                return false;
+                              }
+                            }}
+                            className="w-16 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
+                            min="0.1"
+                            max="100"
+                            step="0.1"
+                          />
+                          <span className="text-xs text-gray-400">%</span>
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <p className="text-xs text-gray-400">Gas (SOL):</p>
-                      <div className="flex items-center gap-1">
-                        <Input
-                          type="number"
-                          value={gasFee}
-                          onChange={handleGasFeeChange}
-                          className="w-24 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
-                          min="0.000005"
-                          step="0.000001"
-                        />
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs text-gray-400">Gas (SOL):</p>
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="number"
+                            value={gasFee}
+                            onChange={handleGasFeeChange}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                return false;
+                              }
+                            }}
+                            className="w-24 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
+                            min="0.000005"
+                            step="0.000001"
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
+                  <Button
+                    type="button"
+                    className="w-full bg-gray-600 hover:bg-gray-700"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handlePoolTrade("sell", e);
+                      return false;
+                    }}
+                    disabled={isLoading}
+                  >
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Processing...
+                      </>
+                    ) : (
+                      `Sell ${symbol} for SWARMS`
+                    )}
+                  </Button>
                 </div>
-                <Button
-                  className="w-full bg-gray-600 hover:bg-gray-700"
-                  onClick={() => handlePoolTrade("sell")}
-                  disabled={isLoading}
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Processing...
-                    </>
-                  ) : (
-                    `Sell ${symbol} for SWARMS`
-                  )}
-                </Button>
-              </div>
-            </TabsContent>
-          </Tabs>
+              </TabsContent>
+            </Tabs>
+          </form>
         )}
       </CardContent>
     </Card>
-  );
+  )
 }
-

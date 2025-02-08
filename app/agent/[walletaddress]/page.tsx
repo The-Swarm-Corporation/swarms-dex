@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { OrderBook } from '@/components/order-book'
@@ -41,6 +41,21 @@ interface TokenDetails {
   metadata?: any
   is_swarm?: boolean
   bonding_curve_address?: string
+  market: {
+    stats: {
+      price: number
+      volume24h: number
+      tvl: number
+      apy: number
+    } | null
+    transactions: Array<{
+      signature: string
+      price: number
+      size: number
+      side: 'buy' | 'sell'
+      timestamp: number
+    }>
+  } | null
 }
 
 interface TokenStatProps {
@@ -140,69 +155,149 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
   const router = useRouter()
   const { user } = useAuth()
   const [token, setToken] = useState<TokenDetails | null>(null)
-  const [marketData, setMarketData] = useState<MarketData | null>(null)
   const [loading, setLoading] = useState(true)
-  const marketServiceRef = useRef<MarketService | null>(null)
+  const [updating, setUpdating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const fetchTimeoutRef = useRef<NodeJS.Timeout>()
+  const lastFetchRef = useRef<number>(0)
+  const [isTrading, setIsTrading] = useState(false)
 
+  // Prevent default form submission for the entire page
   useEffect(() => {
-    fetchData()
-  }, [params.walletaddress])
+    const handleSubmit = (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    };
 
-  const fetchData = async () => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isTrading) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+
+    document.addEventListener('submit', handleSubmit, true);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      document.removeEventListener('submit', handleSubmit, true);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isTrading]);
+
+  const fetchData = useCallback(async (isUpdate = false) => {
     try {
-      setLoading(true)
-      const tokenData = await getTokenByMint(params.walletaddress)
+      // Don't update market data while user is trading
+      if (isTrading && isUpdate) {
+        return
+      }
+
+      // Debounce requests to prevent multiple calls
+      const now = Date.now()
+      if (now - lastFetchRef.current < 1000) { // 1 second debounce
+        return
+      }
+      lastFetchRef.current = now
+
+      // Only show loading on initial load, not during updates or trading
+      if (!isUpdate && !isTrading) {
+        setLoading(true)
+      } else if (!isTrading) {
+        setUpdating(true)
+      }
+
+      const response = await fetch(`/api/agent/${params.walletaddress}`, {
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      })
       
-      if (!tokenData) {
+      if (!response.ok) {
+        throw new Error('Failed to fetch token data')
+      }
+
+      const data = await response.json()
+      
+      if (!data) {
         toast.error('Token not found')
         router.push('/')
         return
       }
 
       const tokenDetails: TokenDetails = {
-        mint_address: tokenData.mint_address,
-        token_symbol: tokenData.token_symbol,
-        name: tokenData.name,
-        description: tokenData.description,
-        price: tokenData.current_price || 0,
-        priceChange24h: tokenData.price_change_24h || 0,
-        liquidityPool: tokenData.market_cap || 0,
-        poolAddress: tokenData.pool_address,
-        creator_wallet: tokenData.creator_wallet || '',
-        metadata: tokenData.metadata,
-        is_swarm: tokenData.is_swarm,
-        bonding_curve_address: tokenData.bonding_curve_address
+        mint_address: data.mint_address,
+        token_symbol: data.token_symbol,
+        name: data.name,
+        description: data.description,
+        price: data.current_price || 0,
+        priceChange24h: data.price_change_24h || 0,
+        liquidityPool: data.market_cap || 0,
+        poolAddress: data.pool_address,
+        creator_wallet: data.creator?.wallet_address || '',
+        metadata: data.metadata,
+        is_swarm: data.is_swarm,
+        bonding_curve_address: data.bonding_curve_address,
+        market: data.market ? {
+          stats: data.market.stats || null,
+          transactions: data.market.transactions || []
+        } : null
       }
       
-      setToken(tokenDetails)
-
-      const marketService = new MarketService(tokenData.mint_address)
-      marketServiceRef.current = marketService
-      
-      const data = await marketService.getMarketData()
-      setMarketData(data)
-
-      const interval = setInterval(async () => {
-        const updatedData = await marketService.getMarketData()
-        setMarketData(updatedData)
-      }, 15000)
-
-      return () => {
-        clearInterval(interval)
-        if (marketServiceRef.current) {
-          marketServiceRef.current.disconnect()
-          marketServiceRef.current = null
+      setToken(prev => {
+        if (!prev) return tokenDetails
+        // If this is an update and we have previous data, smoothly transition
+        if (isUpdate) {
+          return {
+            ...prev,
+            // Only update non-critical fields during trading
+            ...(isTrading ? {} : {
+              price: tokenDetails.price,
+              priceChange24h: tokenDetails.priceChange24h,
+              liquidityPool: tokenDetails.liquidityPool,
+              market: tokenDetails.market
+            })
+          }
         }
-      }
+        return tokenDetails
+      })
     } catch (error) {
       console.error('Failed to fetch token data:', error)
-      toast.error('Failed to load token data')
+      if (!isUpdate) {
+        setError('Failed to load token data')
+        toast.error('Failed to load token data')
+      }
     } finally {
-      setLoading(false)
+      if (!isUpdate) {
+        setLoading(false)
+      } else {
+        setUpdating(false)
+      }
     }
-  }
+  }, [params.walletaddress, router, isTrading])
 
-  if (loading || !token || !marketData) {
+  useEffect(() => {
+    // Clear any existing timeout
+    if (fetchTimeoutRef.current) {
+      clearTimeout(fetchTimeoutRef.current)
+    }
+
+    // Initial fetch
+    fetchData(false)
+
+    // Set up polling every 30 seconds
+    const interval = setInterval(() => fetchData(true), 30000)
+
+    return () => {
+      clearInterval(interval)
+      if (fetchTimeoutRef.current) {
+        clearTimeout(fetchTimeoutRef.current)
+      }
+    }
+  }, [fetchData])
+
+  if (loading || !token) {
     return (
       <div className="flex items-center justify-center min-h-[50vh]">
         <div className="text-red-600">Loading...</div>
@@ -210,11 +305,25 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
     )
   }
 
-  const isCreator = user?.user_metadata?.wallet_address === token.creator_wallet;
-  const needsPool = !token.poolAddress && isCreator;
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <div className="text-red-600">{error}</div>
+      </div>
+    )
+  }
+
+  const isCreator = user?.user_metadata?.wallet_address === token.creator_wallet
+  const needsPool = !token.poolAddress && isCreator
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative">
+      {updating && !isTrading && (
+        <div className="absolute top-2 right-2 flex items-center gap-2 text-xs text-gray-400">
+          <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-red-600"></div>
+          Updating...
+        </div>
+      )}
       <Link 
         href="/" 
         className="inline-flex items-center text-gray-400 hover:text-red-500 transition-colors"
@@ -224,7 +333,6 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
       </Link>
 
       <div className="grid grid-cols-1 md:grid-cols-[1fr,400px] gap-6">
-        {/* Main Content */}
         <div className="space-y-6">
           {/* Token Header Card */}
           <Card className="bg-black/50 border-red-600/20">
@@ -262,7 +370,7 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
           {/* Chart */}
           <Card className="bg-black/50 border-red-600/20">
             <CardContent className="p-0">
-              <TradingViewChart data={marketData} symbol={token.token_symbol} />
+              <TradingViewChart data={null} symbol={token.token_symbol} />
             </CardContent>
           </Card>
 
@@ -270,11 +378,13 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <MarketStats 
               mintAddress={token.mint_address} 
-              symbol={token.token_symbol} 
+              symbol={token.token_symbol}
+              poolData={token.market?.stats || null}
             />
             <OrderBook 
               mintAddress={token.mint_address} 
-              symbol={token.token_symbol} 
+              symbol={token.token_symbol}
+              transactions={token.market?.transactions || []}
             />
           </div>
         </div>
@@ -322,6 +432,18 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
             swapsTokenAddress={process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS}
             bondingCurveAddress={token.bonding_curve_address}
             initialSwarmsAmount={token.metadata?.initial_swarms_amount || "0"}
+            onTradingStateChange={setIsTrading}
+            onPoolCreated={(poolAddress) => {
+              setToken(prev => {
+                if (!prev) return null;
+                return {
+                  ...prev,
+                  poolAddress
+                };
+              });
+              // Trigger a data refresh
+              fetchData(true);
+            }}
           />
         </div>
       </div>

@@ -14,7 +14,7 @@ import { useEffect, useRef } from 'react'
 import { MarketData } from "@/lib/market"
 
 interface TradingViewChartProps {
-  data: MarketData
+  data: MarketData | null
   symbol: string
 }
 
@@ -22,7 +22,7 @@ export function TradingViewChart({ data, symbol }: TradingViewChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!chartContainerRef.current) return
+    if (!chartContainerRef.current || !data) return
 
     const chart = createChart(chartContainerRef.current, {
       layout: {

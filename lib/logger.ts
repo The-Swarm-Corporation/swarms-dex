@@ -68,14 +68,25 @@ class Logger {
     // Deep clone the data
     const cloned = JSON.parse(JSON.stringify(data))
     
-    // Remove sensitive fields
-    const sensitiveFields = ['privateKey', 'secret', 'password', 'token']
+    // Remove sensitive fields - be more specific
+    const sensitiveFields = [
+      'privateKey',
+      'secret',
+      'password',
+      'accessToken',
+      'refreshToken',
+      'apiToken',
+      'authToken',
+      'jwt'
+    ]
     
     const sanitizeObj = (obj: any) => {
       if (typeof obj !== 'object') return obj
       
       Object.keys(obj).forEach(key => {
-        if (sensitiveFields.some(field => key.toLowerCase().includes(field))) {
+        // Only redact exact matches or specific patterns
+        if (sensitiveFields.includes(key.toLowerCase()) || 
+            /^(private|secret|auth)_.*token$/i.test(key)) {
           obj[key] = '[REDACTED]'
         } else if (typeof obj[key] === 'object') {
           obj[key] = this.sanitize(obj[key])
