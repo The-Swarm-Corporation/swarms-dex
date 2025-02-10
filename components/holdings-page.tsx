@@ -62,14 +62,19 @@ const TokenGallery: React.FC = () => {
     const fetchTokenList = async () => {
       try {
         const response = await fetch(JUPITER_TOKEN_LIST_URL);
+        if (!response.ok) {
+          throw new Error('Failed to fetch token list');
+        }
         const data = await response.json();
-        const tokenMap = new Map();
+        const tokenMap = new Map<string, JupiterToken>();
         data.forEach((token: JupiterToken) => {
-          tokenMap.set(token.address, token);
+          // Store by mint address
+          tokenMap.set(token.address.toLowerCase(), token);
         });
         setTokenList(tokenMap);
       } catch (err) {
         console.error('Failed to fetch Jupiter token list:', err);
+        setError('Failed to load token metadata');
       }
     };
     fetchTokenList();
@@ -108,21 +113,27 @@ const TokenGallery: React.FC = () => {
         { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
       );
 
-      const tokenData: TokenData[] = response.value
+      const tokenData = response.value
         .map((item: any) => {
           const mint = item.account.data.parsed.info.mint;
-          const metadata = tokenList.get(mint);
-          return {
+          const metadata = tokenList.get(mint.toLowerCase());
+          const amount = item.account.data.parsed.info.tokenAmount.uiAmount;
+          
+          // Skip tokens with zero balance
+          if (!amount || amount === 0) return null;
+
+          const token: TokenData = {
             mint,
-            amount: item.account.data.parsed.info.tokenAmount.uiAmount,
+            amount,
             decimals: item.account.data.parsed.info.tokenAmount.decimals,
-            symbol: metadata?.symbol || 'Unknown',
-            name: metadata?.name || 'Unknown Token',
+            symbol: metadata?.symbol || mint.slice(0, 6),
+            name: metadata?.name || `Token ${mint.slice(0, 8)}...`,
             logoURI: metadata?.logoURI
           };
+          return token;
         })
-        .filter(token => token.amount && token.amount > 0)
-        .sort((a, b) => (b.amount || 0) - (a.amount || 0));
+        .filter((token): token is TokenData => token !== null)
+        .sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0));
 
       setTokens(tokenData);
     } catch (err) {
@@ -192,9 +203,21 @@ const TokenGallery: React.FC = () => {
           >
             <div className="flex justify-between items-start mb-4">
               <div className="flex flex-col">
-                <span className="text-red-500 font-bold text-xl">
-                  {token.symbol}
-                </span>
+                <div className="flex items-center gap-2">
+                  {token.logoURI && (
+                    <img 
+                      src={token.logoURI} 
+                      alt={token.symbol} 
+                      className="w-6 h-6 rounded-full"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                  )}
+                  <span className="text-red-500 font-bold text-xl">
+                    {token.symbol}
+                  </span>
+                </div>
                 <span className="text-gray-500 text-sm mt-1">
                   {token.name}
                 </span>

@@ -72,21 +72,24 @@ export async function POST(req: Request) {
       const poolStat = poolStatsMap.get(mintAddress)
       const agent = agentDataMap.get(mintAddress)
 
-      if (poolStat?.stats) {
+      // First try to get data from pool stats
+      if (poolStat?.data?.stats) {
         results[mintAddress] = {
           market: {
             stats: {
-              price: poolStat.stats.price,
-              volume24h: poolStat.stats.volume24h,
-              apy: poolStat.stats.apy || 0
+              price: poolStat.data.stats.price,
+              volume24h: poolStat.data.stats.volume24h,
+              apy: poolStat.data.stats.apy || 0
             }
           },
-          price_change_24h: poolStat.stats.price_change_24h || 0,
-          current_price: poolStat.stats.price,
-          volume_24h: poolStat.stats.volume24h,
-          market_cap: agent?.market_cap || poolStat.stats.volume24h
+          price_change_24h: poolStat.data.stats.price_change_24h || 0,
+          current_price: poolStat.data.stats.price,
+          volume_24h: poolStat.data.stats.volume24h,
+          market_cap: agent?.market_cap || poolStat.data.stats.volume24h
         }
-      } else if (agent) {
+      } 
+      // If no pool stats but we have agent data
+      else if (agent) {
         results[mintAddress] = {
           market: {
             stats: {
@@ -101,6 +104,30 @@ export async function POST(req: Request) {
           market_cap: agent.market_cap || 0
         }
       }
+      // If neither pool stats nor agent data, provide zeros
+      else {
+        results[mintAddress] = {
+          market: {
+            stats: {
+              price: 0,
+              volume24h: 0,
+              apy: 0
+            }
+          },
+          price_change_24h: 0,
+          current_price: 0,
+          volume_24h: 0,
+          market_cap: 0
+        }
+      }
+
+      // Log what data source we're using for debugging
+      logger.info(`Market data for ${mintAddress}`, {
+        source: poolStat?.data?.stats ? 'pool_stats' : agent ? 'agent_data' : 'default_zeros',
+        price: results[mintAddress].market.stats.price,
+        volume24h: results[mintAddress].market.stats.volume24h,
+        market_cap: results[mintAddress].market_cap
+      })
     }
 
     // Update cache
