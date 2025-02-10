@@ -198,8 +198,123 @@ export async function POST(request: NextRequest) {
 
     // Handle different sign in scenarios
     if (signInError) {
+      // Handle password migration for users created with different AUTH_SECRET
+      if (signInError.message.includes('Invalid login credentials')) {
+        // Check if user exists
+        const { data: existingUser } = await serviceClient
+          .from('auth.users')
+          .select('id')
+          .eq('email', `${publicKey}@phantom.wallet`)
+          .single()
+
+        if (existingUser) {
+          // User exists but password doesn't match - update password
+          const { error: updateError } = await serviceClient.auth.admin.updateUserById(
+            existingUser.id,
+            { password: generateWalletPassword(publicKey) }
+          )
+
+          if (updateError) throw updateError
+
+          // Try signing in again with new password
+          const { data: retrySignInData, error: retrySignInError } = await supabase.auth.signInWithPassword({
+            email: `${publicKey}@phantom.wallet`,
+            password: generateWalletPassword(publicKey)
+          })
+
+          if (retrySignInError) throw retrySignInError
+          signInData = retrySignInData
+        } else {
+          // If user doesn't exist, proceed with normal signup flow
+          // Case 2: Invalid credentials - create new user
+          // Use service role client for signup to bypass email confirmation
+          const { data: signUpData, error: signUpError } = await serviceClient.auth.admin.createUser({
+            email: `${publicKey}@phantom.wallet`,
+            password: generateWalletPassword(publicKey),
+            email_confirm: true,
+            user_metadata: { wallet_address: publicKey }
+          })
+
+          if (signUpError) {
+            // If user already exists, try to sign in again
+            if (signUpError.message.includes('already been registered')) {
+              const { data: existingUserSignIn, error: existingUserError } = await supabase.auth.signInWithPassword({
+                email: `${publicKey}@phantom.wallet`,
+                password: generateWalletPassword(publicKey)
+              })
+              
+              if (existingUserError) {
+                console.error('Error signing in existing user:', existingUserError)
+                throw existingUserError
+              }
+              
+              signInData = existingUserSignIn
+            } else {
+              console.error('Sign up error:', signUpError)
+              throw signUpError
+            }
+          } else {
+            signInData = signUpData
+          }
+
+          // Create web3users record if it doesn't exist
+          const { error: web3UserError } = await serviceClient
+            .from('web3users')
+            .upsert({ 
+              wallet_address: publicKey,
+              total_trades: 0,
+              total_volume: 0
+            }, { 
+              onConflict: 'wallet_address',
+              ignoreDuplicates: true 
+            })
+
+          if (web3UserError) {
+            console.error('Error upserting web3user:', web3UserError)
+            throw web3UserError
+          }
+
+          // After signup, explicitly sign in to get a session
+          const { data: signInAfterSignupData, error: signInAfterSignupError } = await supabase.auth.signInWithPassword({
+            email: `${publicKey}@phantom.wallet`,
+            password: generateWalletPassword(publicKey)
+          })
+
+          if (signInAfterSignupError) {
+            console.error('Sign in after signup error:', signInAfterSignupError)
+            throw signInAfterSignupError
+          }
+          
+          if (!signInAfterSignupData?.session) {
+            throw new Error('No session created after signup')
+          }
+
+          const response = NextResponse.json({
+            user: signInAfterSignupData.user,
+            session: signInAfterSignupData.session
+          })
+
+          response.cookies.set('sb-access-token', signInAfterSignupData.session.access_token, {
+            path: '/',
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 60 * 60 * 24 * 7 // 1 week
+          })
+
+          response.cookies.set('sb-refresh-token', signInAfterSignupData.session.refresh_token, {
+            path: '/',
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 60 * 60 * 24 * 7 // 1 week
+          })
+
+          return response
+        }
+      }
       // Case 1: Email not confirmed - use admin API to confirm and retry sign in
-      if (signInError.message.includes('Email not confirmed')) {
+      else if (signInError.message.includes('Email not confirmed')) {
         // Get user from auth.users table
         const { data: user, error: getUserError } = await serviceClient
           .from('auth.users')
@@ -234,93 +349,6 @@ export async function POST(request: NextRequest) {
         if (!retrySignInData?.session) throw new Error('No session created during retry sign in')
 
         signInData = retrySignInData
-      }
-      // Case 2: Invalid credentials - create new user
-      else if (signInError.message.includes('Invalid login credentials')) {
-        // Use service role client for signup to bypass email confirmation
-        const { data: signUpData, error: signUpError } = await serviceClient.auth.admin.createUser({
-          email: `${publicKey}@phantom.wallet`,
-          password: generateWalletPassword(publicKey),
-          email_confirm: true,
-          user_metadata: { wallet_address: publicKey }
-        })
-
-        if (signUpError) {
-          // If user already exists, try to sign in again
-          if (signUpError.message.includes('already been registered')) {
-            const { data: existingUserSignIn, error: existingUserError } = await supabase.auth.signInWithPassword({
-              email: `${publicKey}@phantom.wallet`,
-              password: generateWalletPassword(publicKey)
-            })
-            
-            if (existingUserError) {
-              console.error('Error signing in existing user:', existingUserError)
-              throw existingUserError
-            }
-            
-            signInData = existingUserSignIn
-          } else {
-            console.error('Sign up error:', signUpError)
-            throw signUpError
-          }
-        } else {
-          signInData = signUpData
-        }
-
-        // Create web3users record if it doesn't exist
-        const { error: web3UserError } = await serviceClient
-          .from('web3users')
-          .upsert({ 
-            wallet_address: publicKey,
-            total_trades: 0,
-            total_volume: 0
-          }, { 
-            onConflict: 'wallet_address',
-            ignoreDuplicates: true 
-          })
-
-        if (web3UserError) {
-          console.error('Error upserting web3user:', web3UserError)
-          throw web3UserError
-        }
-
-        // After signup, explicitly sign in to get a session
-        const { data: signInAfterSignupData, error: signInAfterSignupError } = await supabase.auth.signInWithPassword({
-          email: `${publicKey}@phantom.wallet`,
-          password: generateWalletPassword(publicKey)
-        })
-
-        if (signInAfterSignupError) {
-          console.error('Sign in after signup error:', signInAfterSignupError)
-          throw signInAfterSignupError
-        }
-        
-        if (!signInAfterSignupData?.session) {
-          throw new Error('No session created after signup')
-        }
-
-        const response = NextResponse.json({
-          user: signInAfterSignupData.user,
-          session: signInAfterSignupData.session
-        })
-
-        response.cookies.set('sb-access-token', signInAfterSignupData.session.access_token, {
-          path: '/',
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
-          maxAge: 60 * 60 * 24 * 7 // 1 week
-        })
-
-        response.cookies.set('sb-refresh-token', signInAfterSignupData.session.refresh_token, {
-          path: '/',
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
-          maxAge: 60 * 60 * 24 * 7 // 1 week
-        })
-
-        return response
       } else {
         // If it's any other error, throw it
         throw signInError
