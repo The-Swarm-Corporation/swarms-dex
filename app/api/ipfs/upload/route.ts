@@ -62,8 +62,5 @@ export async function POST(req: Request) {
 }
 
 // Increase payload size limit for file uploads
-export const config = {
-  api: {
-    bodyParser: false
-  }
-} 
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic' 

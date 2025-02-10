@@ -98,14 +98,10 @@ try {
   throw error;
 }
 
-const SWARMS_MINIMUM_BUY_IN = 100;
-
-// Increase payload size limit for file uploads
-export const config = {
-  api: {
-    bodyParser: false
-  }
-}
+// Route configuration for file uploads and dynamic execution
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+export const maxDuration = 300 // 5 minutes timeout for long-running minting process
 
 // Add function to derive pool PDA
 async function derivePoolAccount(mint: PublicKey): Promise<[PublicKey, number]> {
@@ -194,44 +190,6 @@ async function simulatePoolCreationCost(
 
   // Return total cost with buffer
   return (estimatedFee + totalRentExempt) * 1.2; // 20% buffer
-}
-
-// Add function to calculate total required SOL
-async function calculateRequiredSol(
-  connection: Connection,
-  userPubkey: PublicKey,
-  mintKeypair: PublicKey,
-  bondingCurveKeypair: PublicKey
-): Promise<number> {
-  // 1. Calculate rent exemptions
-  const accountRentExempt = await connection.getMinimumBalanceForRentExemption(0);
-  const mintRentExempt = await connection.getMinimumBalanceForRentExemption(MINT_SIZE);
-  const ataRentExempt = await connection.getMinimumBalanceForRentExemption(165); // Standard ATA size
-  
-  // 2. Simulate pool creation cost
-  const poolCreationCost = await simulatePoolCreationCost(
-    connection,
-    bondingCurveKeypair,
-    mintKeypair
-  );
-
-  // 3. Calculate total with all components
-  const totalCost = (
-    accountRentExempt +    // Bonding curve account rent
-    mintRentExempt +       // Mint account rent
-    (ataRentExempt * 2) +  // Two ATAs (token and SWARMS)
-    poolCreationCost       // Pool creation cost (includes its own buffer)
-  ) / LAMPORTS_PER_SOL;
-
-  console.log('Cost breakdown:', {
-    accountRent: accountRentExempt / LAMPORTS_PER_SOL,
-    mintRent: mintRentExempt / LAMPORTS_PER_SOL,
-    ataRent: (ataRentExempt * 2) / LAMPORTS_PER_SOL,
-    poolCreation: poolCreationCost,
-    total: totalCost
-  });
-
-  return totalCost;
 }
 
 export async function POST(req: Request) {
