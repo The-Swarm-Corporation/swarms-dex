@@ -54,7 +54,7 @@ export function TokenTradingPanel({
   const [currentPrice, setCurrentPrice] = useState(initialPrice)
   const [estimatedCost, setEstimatedCost] = useState(0)
   const [slippage, setSlippage] = useState(MAX_SLIPPAGE_PERCENT)
-  const [gasFee, setGasFee] = useState(0.000005) // Default SOL gas fee
+  const [gasFee, setGasFee] = useState(0.00005) // Default SOL gas fee
   const [trading, setTrading] = useState<TokenTrading | null>(null)
   const [meteoraService, setMeteoraService] = useState<MeteoraService | null>(null)
   const [pool, setPool] = useState<{ address: PublicKey } | null>(null)
@@ -141,120 +141,6 @@ export function TokenTradingPanel({
     }
   }
 
-  const handleBondingCurveSwap = async (action: "buy" | "sell") => {
-    if (!user || !amount || !connection || !bondingCurveAddress) {
-      toast.error("Please connect your wallet and enter an amount");
-      return;
-    }
-
-    onTradingStateChange?.(true);
-    setIsLoading(true);
-    const toastId = toast.loading("Preparing bonding curve swap...");
-
-    try {
-      const walletAddress = user.user_metadata?.wallet_address;
-      if (!walletAddress) {
-        toast.error("Wallet address not found");
-        return;
-      }
-
-      // @ts-ignore - Phantom wallet type
-      const provider = window?.phantom?.solana;
-      if (!provider?.isPhantom) {
-        toast.error("Please install Phantom wallet");
-        return;
-      }
-
-      // Get user's token accounts
-      const userTokenAccount = await getAssociatedTokenAddress(
-        new PublicKey(mintAddress),
-        new PublicKey(walletAddress)
-      );
-
-      const userSwarmsAccount = await getAssociatedTokenAddress(
-        new PublicKey(swapsTokenAddress!),
-        new PublicKey(walletAddress)
-      );
-
-      // Create transfer transaction
-      const response = await fetch('/api/solana/transfer-swarms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          walletAddress,
-          swarmsAmount: amount,
-          fromAccount: action === "buy" ? userSwarmsAccount.toString() : userTokenAccount.toString(),
-          toAccount: bondingCurveAddress
-        })
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        if (error.details) {
-          const { balance, required, token, decimals = 6 } = error.details;
-          const formattedBalance = (balance / Math.pow(10, decimals)).toFixed(decimals);
-          const formattedRequired = (required / Math.pow(10, decimals)).toFixed(decimals);
-          
-          toast.error(
-            `Insufficient ${token} balance. Required: ${formattedRequired}, Available: ${formattedBalance}`
-          );
-          return;
-        }
-        throw new Error(error.error || "Failed to create transaction");
-      }
-
-      const { transaction: serializedTx } = await response.json();
-
-      // Sign with Phantom wallet
-      const tx = Transaction.from(Buffer.from(serializedTx, "base64"));
-      const signedTx = await provider.signTransaction(tx);
-
-      // Send signed transaction
-      const submitResponse = await fetch('/api/solana/transfer-swarms', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          signedTransaction: signedTx.serialize().toString("base64")
-        })
-      });
-
-      if (!submitResponse.ok) {
-        throw new Error("Failed to submit transaction");
-      }
-
-      const { signature } = await submitResponse.json();
-
-      // Handle success without triggering refresh
-      requestAnimationFrame(() => {
-        toast.success(
-          <div>
-            Bonding curve swap successful!{" "}
-            <a
-              href={`https://solscan.io/tx/${signature}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline"
-            >
-              View on Solscan
-            </a>
-          </div>,
-          { id: toastId }
-        );
-
-        setAmount("");
-        celebrateSuccess();
-      });
-
-    } catch (error) {
-      console.error("Bonding curve swap failed:", error);
-      toast.error(error instanceof Error ? error.message : "Swap failed");
-    } finally {
-      setIsLoading(false);
-      onTradingStateChange?.(false);
-    }
-  };
-
-  // Modify handlePoolTrade to handle confirmation without refresh
   const handlePoolTrade = async (action: "buy" | "sell") => {
     try {
       if (!user || !amount || !connection || !currentPoolAddress || !swapsTokenAddress) {
@@ -262,8 +148,8 @@ export function TokenTradingPanel({
         return;
       }
 
-      onTradingStateChange?.(true);
       setIsLoading(true);
+      onTradingStateChange?.(true);
       const toastId = toast.loading("Preparing pool trade...");
 
       const walletAddress = user.user_metadata?.wallet_address;
@@ -354,13 +240,138 @@ export function TokenTradingPanel({
         );
 
         setAmount("");
-        celebrateSuccess();
+        setShowConfetti(true);
+        
+        // Delay turning off trading state to allow confetti to show
+        setTimeout(() => {
+          setIsLoading(false);
+          onTradingStateChange?.(false);
+          setTimeout(() => setShowConfetti(false), 5000);
+        }, 1000);
       });
       
     } catch (error) {
       console.error("Pool trade failed:", error);
       toast.error(error instanceof Error ? error.message : "Trade failed");
-    } finally {
+      setIsLoading(false);
+      onTradingStateChange?.(false);
+    }
+  };
+
+  const handleBondingCurveSwap = async (action: "buy" | "sell") => {
+    try {
+      if (!user || !amount || !connection || !bondingCurveAddress) {
+        toast.error("Please connect your wallet and enter an amount");
+        return;
+      }
+
+      setIsLoading(true);
+      onTradingStateChange?.(true);
+      const toastId = toast.loading("Preparing bonding curve swap...");
+
+      const walletAddress = user.user_metadata?.wallet_address;
+      if (!walletAddress) {
+        toast.error("Wallet address not found");
+        return;
+      }
+
+      // @ts-ignore - Phantom wallet type
+      const provider = window?.phantom?.solana;
+      if (!provider?.isPhantom) {
+        toast.error("Please install Phantom wallet");
+        return;
+      }
+
+      // Get user's token accounts
+      const userTokenAccount = await getAssociatedTokenAddress(
+        new PublicKey(mintAddress),
+        new PublicKey(walletAddress)
+      );
+
+      const userSwarmsAccount = await getAssociatedTokenAddress(
+        new PublicKey(swapsTokenAddress!),
+        new PublicKey(walletAddress)
+      );
+
+      // Create transfer transaction
+      const response = await fetch('/api/solana/transfer-swarms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          walletAddress,
+          swarmsAmount: amount,
+          fromAccount: action === "buy" ? userSwarmsAccount.toString() : userTokenAccount.toString(),
+          toAccount: bondingCurveAddress
+        })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        if (error.details) {
+          const { balance, required, token, decimals = 6 } = error.details;
+          const formattedBalance = (balance / Math.pow(10, decimals)).toFixed(decimals);
+          const formattedRequired = (required / Math.pow(10, decimals)).toFixed(decimals);
+          
+          toast.error(
+            `Insufficient ${token} balance. Required: ${formattedRequired}, Available: ${formattedBalance}`
+          );
+          return;
+        }
+        throw new Error(error.error || "Failed to create transaction");
+      }
+
+      const { transaction: serializedTx } = await response.json();
+
+      // Sign with Phantom wallet
+      const tx = Transaction.from(Buffer.from(serializedTx, "base64"));
+      const signedTx = await provider.signTransaction(tx);
+
+      // Send signed transaction
+      const submitResponse = await fetch('/api/solana/transfer-swarms', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          signedTransaction: signedTx.serialize().toString("base64")
+        })
+      });
+
+      if (!submitResponse.ok) {
+        throw new Error("Failed to submit transaction");
+      }
+
+      const { signature } = await submitResponse.json();
+
+      // Handle success without triggering refresh
+      requestAnimationFrame(() => {
+        toast.success(
+          <div>
+            Bonding curve swap successful!{" "}
+            <a
+              href={`https://solscan.io/tx/${signature}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              View on Solscan
+            </a>
+          </div>,
+          { id: toastId }
+        );
+
+        setAmount("");
+        setShowConfetti(true);
+        
+        // Delay turning off trading state to allow confetti to show
+        setTimeout(() => {
+          setIsLoading(false);
+          onTradingStateChange?.(false);
+          setTimeout(() => setShowConfetti(false), 5000);
+        }, 1000);
+      });
+
+    } catch (error) {
+      console.error("Bonding curve swap failed:", error);
+      toast.error(error instanceof Error ? error.message : "Swap failed");
       setIsLoading(false);
       onTradingStateChange?.(false);
     }
@@ -593,7 +604,14 @@ export function TokenTradingPanel({
           
           // Notify parent component
           onPoolCreated?.(poolAddress);
-          celebrateSuccess();
+          setShowConfetti(true);
+          
+          // Delay turning off trading state to allow confetti to show
+          setTimeout(() => {
+            setIsLoading(false);
+            onTradingStateChange?.(false);
+            setTimeout(() => setShowConfetti(false), 5000);
+          }, 1000);
           return;
         }
 
@@ -723,18 +741,23 @@ export function TokenTradingPanel({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    return false;
-  };
-
   const handleButtonClick = async (action: "buy" | "sell", e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (!isLoading) {
-      await handlePoolTrade(action);
+      try {
+        await handlePoolTrade(action);
+      } catch (error) {
+        // Handle error if needed
+      }
     }
+    return false;
+  };
+
+  // Prevent form submission at the form level too
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
     return false;
   };
 
@@ -749,11 +772,6 @@ export function TokenTradingPanel({
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [])
-
-  const celebrateSuccess = () => {
-    setShowConfetti(true)
-    setTimeout(() => setShowConfetti(false), 5000) // Stop confetti after 5 seconds
-  }
 
   return (
     <div className="relative">
@@ -830,7 +848,7 @@ export function TokenTradingPanel({
             </div>
           ) : (
             <form 
-              onSubmit={handleSubmit}
+              onSubmit={handleFormSubmit}
               className="w-full"
               noValidate
             >
@@ -840,6 +858,7 @@ export function TokenTradingPanel({
                     type="button"
                     value="buy" 
                     className="data-[state=active]:bg-red-600"
+                    onClick={(e) => e.preventDefault()}
                   >
                     Buy
                   </TabsTrigger>
@@ -847,6 +866,7 @@ export function TokenTradingPanel({
                     type="button"
                     value="sell" 
                     className="data-[state=active]:bg-gray-600"
+                    onClick={(e) => e.preventDefault()}
                   >
                     Sell
                   </TabsTrigger>
@@ -1023,7 +1043,7 @@ export function TokenTradingPanel({
           numberOfPieces={500}
           gravity={0.3}
           colors={['#ef4444', '#dc2626', '#b91c1c', '#7f1d1d', '#fbbf24']}
-          style={{ position: 'fixed', top: 0, left: 0, zIndex: 100 }}
+          style={{ position: 'fixed', top: 0, left: 0, zIndex: 100, pointerEvents: 'none' }}
         />
       )}
     </div>

@@ -348,12 +348,12 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
             ...prev,
             // Only update non-critical fields during trading
             ...(isTrading ? {} : {
-              price: tokenDetails.price,
-              priceChange24h: tokenDetails.priceChange24h,
-              liquidityPool: tokenDetails.liquidityPool,
+            price: tokenDetails.price,
+            priceChange24h: tokenDetails.priceChange24h,
+            liquidityPool: tokenDetails.liquidityPool,
               market: tokenDetails.market ? {
                 stats: tokenDetails.market.stats,
-                transactions: [
+              transactions: [
                   ...(prev.market?.transactions || []),
                   ...(tokenDetails.market.transactions || [])
                     .filter(tx => 
@@ -388,8 +388,10 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
       clearTimeout(fetchTimeoutRef.current)
     }
 
-    // Initial fetch
-    fetchData(false)
+    // Initial fetch only on mount
+    if (!isTrading && !lastFetchRef.current) {
+      fetchData(false)
+    }
 
     // Set up polling every 30 seconds for subtle updates
     const interval = setInterval(() => {
@@ -399,10 +401,21 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
       }
     }, 30000)
 
+    // When trading state changes from true to false, delay the fetch
+    let delayedFetch: NodeJS.Timeout
+    if (!isTrading && lastFetchRef.current) {
+      delayedFetch = setTimeout(() => {
+        fetchData(true)
+      }, 6000) // Wait 6 seconds after trading completes (after confetti)
+    }
+
     return () => {
       clearInterval(interval)
       if (fetchTimeoutRef.current) {
         clearTimeout(fetchTimeoutRef.current)
+      }
+      if (delayedFetch) {
+        clearTimeout(delayedFetch)
       }
     }
   }, [fetchData, isTrading])

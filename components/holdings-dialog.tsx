@@ -59,13 +59,26 @@ export function HoldingsDialog() {
     try {
       setLoading(true)
       setError(null)
+      setHoldings([]) // Clear existing holdings while loading
 
-      const response = await fetch(`/api/tokens/holdings?wallet=${walletAddress}`)
+      const response = await fetch(`/api/tokens/holdings?wallet=${walletAddress}`, {
+        // Add cache control headers
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      })
+      
       if (!response.ok) {
-        throw new Error('Failed to fetch holdings')
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || 'Failed to fetch holdings')
       }
 
       const holdings = await response.json()
+
+      if (!Array.isArray(holdings)) {
+        throw new Error('Invalid holdings data received')
+      }
 
       logger.info("Holdings fetched successfully", {
         count: holdings.length,
@@ -93,9 +106,11 @@ export function HoldingsDialog() {
         details: {
           error: errorMessage,
         },
+        wallet_address: walletAddress,
       })
 
       setError(errorMessage)
+      toast.error(errorMessage)
     } finally {
       setLoading(false)
     }
@@ -138,19 +153,31 @@ export function HoldingsDialog() {
         <DialogHeader>
           <div className="flex justify-between items-center">
             <DialogTitle className="text-red-600">Wallet Holdings</DialogTitle>
-            <div className="flex items-center gap-3 text-xs text-gray-400">
-              {currencies.map((currency) => (
-                <div key={currency.symbol} className="flex items-center gap-1">
-                  <span>{currency.symbol}</span>
-                  <span className="font-mono">
-                    {currency.uiAmount.toLocaleString(undefined, {
-                      maximumFractionDigits: currency.decimals,
-                    })}
-                  </span>
+            <div className="flex items-center gap-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-red-600 hover:text-red-500"
+                onClick={fetchHoldings}
+                disabled={loading || !isAuthenticated}
+              >
+                <Coins className="h-4 w-4 mr-1" />
+                Refresh
+              </Button>
+              <div className="flex items-center gap-3 text-xs text-gray-400">
+                {currencies.map((currency) => (
+                  <div key={currency.symbol} className="flex items-center gap-1">
+                    <span>{currency.symbol}</span>
+                    <span className="font-mono">
+                      {currency.uiAmount.toLocaleString(undefined, {
+                        maximumFractionDigits: currency.decimals,
+                      })}
+                    </span>
+                  </div>
+                ))}
+                <div className="border-l border-red-600/20 pl-3">
+                  <span className="font-mono">${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
-              ))}
-              <div className="border-l border-red-600/20 pl-3">
-                <span className="font-mono">${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
             </div>
           </div>
@@ -158,10 +185,21 @@ export function HoldingsDialog() {
         </DialogHeader>
         <div className="space-y-4">
           {error ? (
-            <div className="text-center text-red-500 py-4">{error}</div>
+            <div className="text-center text-red-500 py-4 space-y-2">
+              <div>{error}</div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchHoldings}
+                disabled={loading || !isAuthenticated}
+              >
+                Try Again
+              </Button>
+            </div>
           ) : loading ? (
-            <div className="flex justify-center py-8">
+            <div className="flex flex-col items-center justify-center py-8 space-y-2">
               <Loader2 className="h-6 w-6 animate-spin text-red-600" />
+              <div className="text-sm text-gray-400">Fetching your holdings...</div>
             </div>
           ) : holdings.length > 0 && agentTokens.length > 0 ? (
             <div className="space-y-3">

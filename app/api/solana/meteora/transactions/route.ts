@@ -200,26 +200,28 @@ async function getLatestTransactions(
 
     // First try to get cached transactions from database
     const { data: cachedData, error: cacheError } = await supabase
-      .from('meteora_transactions')
+      .from('meteora_individual_transactions')
       .select('*')
       .eq('mint_address', tokenMint.toString())
-      .single()
-
-    let mostRecentSignature: string | undefined = undefined
+      .order('timestamp', { ascending: false })
+      .limit(100)
 
     if (!cacheError && cachedData) {
-      const typedData = cachedData as unknown as CachedTransactionData
-      existingTransactions = typedData.data
-      mostRecentSignature = existingTransactions[0]?.signature
+      existingTransactions = cachedData.map(tx => ({
+        signature: tx.signature,
+        price: tx.price,
+        size: tx.size,
+        side: tx.side,
+        timestamp: tx.timestamp,
+        isSwap: tx.is_swap
+      }))
       
-      // If cache is fresh (less than 1 minute old) or if the most recent signature matches our last known signature
-      const cacheAge = Date.now() - new Date(typedData.updated_at).getTime()
-      if (cacheAge < 60 * 1000 || (lastKnownSignature && existingTransactions[0]?.signature === lastKnownSignature)) {
+      // If we have a last known signature and it matches our most recent one, return cached data
+      if (lastKnownSignature && existingTransactions[0]?.signature === lastKnownSignature) {
         logger.info("Using cached transactions", {
           mintAddress: tokenMint.toString(),
           transactionCount: existingTransactions.length,
-          cacheAge: `${Math.round(cacheAge / 1000)}s`,
-          hasLastKnownSignature: !!lastKnownSignature
+          hasLastKnownSignature: true
         })
         return existingTransactions.filter(tx => tx.isSwap)
       }
@@ -230,26 +232,17 @@ async function getLatestTransactions(
       poolKey,
       { 
         limit: 10,
-        before: mostRecentSignature // Only get transactions newer than our cache
+        before: lastKnownSignature
       },
       'confirmed'
     )
 
-    if (signatures.length === 0 || (existingTransactions.length > 0 && signatures.length === existingTransactions.length)) {
+    if (signatures.length === 0) {
       logger.info("No new transactions to process", {
         mintAddress: tokenMint.toString(),
         poolAddress: poolKey.toString(),
-        signatureCount: signatures.length,
-        existingCount: existingTransactions.length
+        signatureCount: signatures.length
       })
-      // Update cache timestamp even if no new transactions
-      await supabase
-        .from('meteora_transactions')
-        .upsert({
-          mint_address: tokenMint.toString(),
-          data: existingTransactions,
-          updated_at: new Date().toISOString()
-        })
       return existingTransactions
     }
 
@@ -274,15 +267,30 @@ async function getLatestTransactions(
 
         const swapDetails = parseSwapTransaction(tx, tokenMint, swarmsMint, vaultAddresses)
         
-        // Save all transactions, but mark non-swaps with null values
-        newTransactions.push({
+        const transaction = {
           signature: sig.signature,
           price: swapDetails?.price ?? null,
           size: swapDetails?.size ?? null,
           side: swapDetails?.side ?? null,
           timestamp: sig.blockTime ? sig.blockTime * 1000 : Date.now(),
           isSwap: !!swapDetails
-        })
+        }
+
+        // Insert individual transaction
+        await supabase
+          .from('meteora_individual_transactions')
+          .upsert({
+            mint_address: tokenMint.toString(),
+            signature: transaction.signature,
+            price: transaction.price,
+            size: transaction.size,
+            side: transaction.side,
+            timestamp: transaction.timestamp,
+            is_swap: transaction.isSwap,
+            updated_at: new Date().toISOString()
+          })
+
+        newTransactions.push(transaction)
 
         if (!swapDetails) {
           logger.info("Saving non-swap transaction", { signature: sig.signature })
@@ -291,14 +299,29 @@ async function getLatestTransactions(
       } catch (error) {
         logger.error("Error processing transaction", error as Error, { signature: sig.signature })
         // Save failed transactions too
-        newTransactions.push({
+        const errorTransaction = {
           signature: sig.signature,
           price: null,
           size: null,
           side: null,
           timestamp: sig.blockTime ? sig.blockTime * 1000 : Date.now(),
           isSwap: false
-        })
+        }
+
+        await supabase
+          .from('meteora_individual_transactions')
+          .upsert({
+            mint_address: tokenMint.toString(),
+            signature: errorTransaction.signature,
+            price: errorTransaction.price,
+            size: errorTransaction.size,
+            side: errorTransaction.side,
+            timestamp: errorTransaction.timestamp,
+            is_swap: errorTransaction.isSwap,
+            updated_at: new Date().toISOString()
+          })
+
+        newTransactions.push(errorTransaction)
       }
     }
 
@@ -309,15 +332,6 @@ async function getLatestTransactions(
 
     // Filter out non-swaps when returning to user
     const swapTransactions = allTransactions.filter(tx => tx.isSwap)
-
-    // Update cache with merged transactions
-    await supabase
-      .from('meteora_transactions')
-      .upsert({
-        mint_address: tokenMint.toString(),
-        data: allTransactions,
-        updated_at: new Date().toISOString()
-      })
 
     logger.info("Updated transaction cache", {
       mintAddress: tokenMint.toString(),
@@ -359,24 +373,22 @@ export async function GET(req: Request) {
 
     // Try to get cached data first
     const { data: cachedData, error: cacheError } = await supabase
-      .from('meteora_transactions')
+      .from('meteora_individual_transactions')
       .select('*')
       .eq('mint_address', mintAddress)
-      .single()
+      .order('timestamp', { ascending: false })
+      .limit(100)
 
-    if (!cacheError && cachedData?.data?.length > 0) {
-      const typedData = cachedData as unknown as CachedTransactionData
-      existingTransactions = typedData.data
-      lastKnownSignature = existingTransactions[0]?.signature // Most recent transaction
-      
-      const cacheAge = Date.now() - new Date(typedData.updated_at).getTime()
-      if (cacheAge < 60 * 1000) { // 1 minute cache
-        logger.info("Returning cached Meteora transactions", { 
-          mintAddress,
-          transactionCount: existingTransactions.length
-        })
-        return NextResponse.json({ transactions: existingTransactions }, { headers })
-      }
+    if (!cacheError && cachedData) {
+      existingTransactions = cachedData.map(tx => ({
+        signature: tx.signature,
+        price: tx.price,
+        size: tx.size,
+        side: tx.side,
+        timestamp: tx.timestamp,
+        isSwap: tx.is_swap
+      }))
+      lastKnownSignature = existingTransactions[0]?.signature
     }
 
     const tokenMint = new PublicKey(mintAddress)
@@ -400,17 +412,8 @@ export async function GET(req: Request) {
 
     // Merge new transactions with existing ones
     const allTransactions = [...newTransactions, ...existingTransactions]
-      .sort((a: Transaction, b: Transaction) => b.timestamp - a.timestamp) // Sort by timestamp descending
+      .sort((a: Transaction, b: Transaction) => b.timestamp - a.timestamp)
       .slice(0, 100) // Keep only the 100 most recent transactions
-
-    // Update cache with merged transactions
-    await supabase
-      .from('meteora_transactions')
-      .upsert({
-        mint_address: mintAddress,
-        data: allTransactions,
-        updated_at: new Date().toISOString()
-      })
 
     return NextResponse.json({ transactions: allTransactions }, { headers })
 

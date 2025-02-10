@@ -41,7 +41,7 @@ export function OrderBook({ mintAddress, symbol, transactions }: OrderBookProps)
                   ${tx.price.toLocaleString(undefined, { minimumFractionDigits: 10, maximumFractionDigits: 10 })}
                 </span>
                 <span className="text-right">
-                  {tx.size.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
+                  {Math.round(tx.size).toLocaleString()}
                 </span>
                 <span className="text-right text-gray-400">
                   ${(tx.price * tx.size).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}

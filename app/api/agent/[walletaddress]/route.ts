@@ -276,18 +276,87 @@ async function getRecentTransactions(
     swarmsVaultAddress: string
   }
 ) {
-  // Get recent signatures with retries
-  const signatures = await rpcRouter.withRetry(async () => {
+  // First try to get cached transactions from database
+  const { data: cachedTransactions, error: cacheError } = await supabase
+    .from('meteora_individual_transactions')
+    .select('*')
+    .eq('mint_address', tokenMint.toString())
+    .order('timestamp', { ascending: false })
+    .limit(100)
+
+  let existingTransactions: Array<{
+    signature: string
+    price: number
+    size: number
+    side: 'buy' | 'sell'
+    timestamp: number
+  }> = []
+
+  if (!cacheError && cachedTransactions) {
+    existingTransactions = cachedTransactions.map(tx => ({
+      signature: tx.signature,
+      price: tx.price || 0,
+      size: tx.size || 0,
+      side: tx.side as 'buy' | 'sell',
+      timestamp: tx.timestamp
+    })).filter(tx => tx.price && tx.size) // Only include valid transactions
+
+    if (existingTransactions.length > 0) {
+      logger.info("Found cached transactions", {
+        count: existingTransactions.length,
+        mintAddress: tokenMint.toString(),
+        mostRecent: new Date(existingTransactions[0].timestamp).toISOString()
+      })
+    }
+  }
+
+  // First check total transaction count for the pool
+  const totalSignatures = await rpcRouter.withRetry(async () => {
     return await connection.getSignaturesForAddress(
       poolKey,
-      { limit: 10 },
+      { limit: 1 },
       'confirmed'
     )
   })
 
-  logger.info("Found recent signatures", {
+  // If we have all transactions or there are no new ones, return cached data
+  if (totalSignatures.length === 0 || (existingTransactions.length > 0 && totalSignatures[0].signature === existingTransactions[0].signature)) {
+    logger.info("No new transactions to process", {
+      mintAddress: tokenMint.toString(),
+      poolAddress: poolKey.toString(),
+      cachedCount: existingTransactions.length,
+      latestSignature: totalSignatures[0]?.signature
+    })
+    return existingTransactions
+  }
+
+  // Get recent signatures with retries, only if we need new ones
+  const signatures = await rpcRouter.withRetry(async () => {
+    return await connection.getSignaturesForAddress(
+      poolKey,
+      { 
+        limit: 10,
+        before: totalSignatures[0].signature,
+        until: existingTransactions[0]?.signature // Stop at our most recent cached transaction
+      },
+      'confirmed'
+    )
+  })
+
+  if (signatures.length === 0) {
+    logger.info("No new transactions found in range", {
+      mintAddress: tokenMint.toString(),
+      poolAddress: poolKey.toString()
+    })
+    return existingTransactions
+  }
+
+  logger.info("Found new signatures", {
     count: signatures.length,
-    poolAddress: poolKey.toString()
+    poolAddress: poolKey.toString(),
+    firstNew: signatures[0].signature,
+    lastNew: signatures[signatures.length - 1].signature,
+    firstCached: existingTransactions[0]?.signature
   })
 
   // Batch fetch parsed transactions
@@ -301,8 +370,8 @@ async function getRecentTransactions(
     )
   })
 
-  // Process transactions using the shared parser
-  const transactions = []
+  // Process new transactions using the shared parser
+  const newTransactions = []
   for (let i = 0; i < parsedTransactions.length; i++) {
     const tx = parsedTransactions[i]
     const sig = signatures[i]
@@ -320,16 +389,59 @@ async function getRecentTransactions(
 
     if (!swapDetails) {
       logger.info("Skipping transaction - not a valid swap", { signature: sig.signature })
+      
+      // Save non-swap transaction
+      await supabase
+        .from('meteora_individual_transactions')
+        .upsert({
+          mint_address: tokenMint.toString(),
+          signature: sig.signature,
+          price: null,
+          size: null,
+          side: null,
+          timestamp: sig.blockTime ? sig.blockTime * 1000 : Date.now(),
+          is_swap: false,
+          updated_at: new Date().toISOString()
+        })
+      
       continue
     }
 
-    transactions.push({
+    const transaction = {
       ...swapDetails,
       timestamp: sig.blockTime ? sig.blockTime * 1000 : Date.now()
-    })
+    }
+
+    // Save swap transaction
+    await supabase
+      .from('meteora_individual_transactions')
+      .upsert({
+        mint_address: tokenMint.toString(),
+        signature: transaction.signature,
+        price: transaction.price,
+        size: transaction.size,
+        side: transaction.side,
+        timestamp: transaction.timestamp,
+        is_swap: true,
+        updated_at: new Date().toISOString()
+      })
+
+    newTransactions.push(transaction)
   }
 
-  return transactions.sort((a, b) => b.timestamp - a.timestamp)
+  // Merge new transactions with existing ones and sort
+  const allTransactions = [...newTransactions, ...existingTransactions]
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, 100) // Keep only the 100 most recent transactions
+
+  logger.info("Transaction update complete", {
+    mintAddress: tokenMint.toString(),
+    newTransactions: newTransactions.length,
+    totalTransactions: allTransactions.length,
+    timestamp: new Date().toISOString()
+  })
+
+  return allTransactions
 }
 
 export async function GET(
