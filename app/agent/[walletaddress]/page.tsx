@@ -13,19 +13,6 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/providers/auth-provider'
 import { toast } from 'sonner'
-import { getTokenByMint } from '@/lib/api'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { PublicKey, Transaction, Connection } from '@solana/web3.js'
-import { getAssociatedTokenAddress } from '@solana/spl-token'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
 
 interface TokenDetails {
@@ -150,6 +137,117 @@ export async function getTokenPrices({
   return data;
 }
 
+function transformTransactionsToOHLCV(transactions: Array<{
+  signature: string
+  price: number // This is price in SWARMS
+  size: number
+  side: 'buy' | 'sell'
+  timestamp: number
+}>, swarmsPrice: number = 0): MarketData {
+  if (!transactions || transactions.length === 0) {
+    return {
+      price: 0,
+      volume24h: 0,
+      marketCap: 0,
+      highPrice24h: 0,
+      lowPrice24h: 0,
+      priceHistory: []
+    }
+  }
+
+  // Sort transactions by timestamp
+  const sortedTx = [...transactions].sort((a, b) => a.timestamp - b.timestamp)
+  const firstTime = sortedTx[0].timestamp
+  const lastTime = sortedTx[sortedTx.length - 1].timestamp
+  const timeframe = 3600000 // 1 hour in milliseconds
+
+  // Create time buckets for each hour
+  const buckets: { [key: number]: typeof sortedTx } = {}
+  for (let time = firstTime; time <= lastTime; time += timeframe) {
+    buckets[time] = []
+  }
+
+  // Group transactions into hourly buckets
+  sortedTx.forEach(tx => {
+    const bucketTime = Math.floor(tx.timestamp / timeframe) * timeframe
+    if (!buckets[bucketTime]) {
+      buckets[bucketTime] = []
+    }
+    buckets[bucketTime].push({
+      ...tx,
+      price: tx.price * swarmsPrice // Convert SWARMS price to USD
+    })
+  })
+
+  // Calculate OHLCV for each bucket and ensure ascending order
+  const priceHistory = Object.entries(buckets)
+    .sort(([timeA], [timeB]) => parseInt(timeA) - parseInt(timeB))
+    .map(([time, txs]) => {
+      if (txs.length === 0) {
+        // Use the last known price for empty buckets
+        const lastKnownPrice = sortedTx.find(tx => tx.timestamp < parseInt(time))?.price || 0
+        return {
+          time: new Date(parseInt(time)),
+          open: lastKnownPrice * swarmsPrice,
+          high: lastKnownPrice * swarmsPrice,
+          low: lastKnownPrice * swarmsPrice,
+          close: lastKnownPrice * swarmsPrice,
+          volume: 0
+        }
+      }
+
+      const prices = txs.map(tx => tx.price)
+      const volume = txs.reduce((sum, tx) => sum + (tx.price * tx.size), 0)
+
+      return {
+        time: new Date(parseInt(time)),
+        open: txs[0].price,
+        high: Math.max(...prices),
+        low: Math.min(...prices),
+        close: txs[txs.length - 1].price,
+        volume
+      }
+    })
+
+  // Calculate 24h stats
+  const now = Date.now()
+  const last24hTx = sortedTx.map(tx => ({
+    ...tx,
+    price: tx.price * swarmsPrice // Convert SWARMS price to USD
+  })).filter(tx => tx.timestamp > now - 24 * 3600000)
+  const prices24h = last24hTx.map(tx => tx.price)
+  const volume24h = last24hTx.reduce((sum, tx) => sum + (tx.price * tx.size), 0)
+
+  return {
+    price: (sortedTx[sortedTx.length - 1]?.price || 0) * swarmsPrice,
+    volume24h,
+    marketCap: 0, // We don't have this information
+    highPrice24h: prices24h.length > 0 ? Math.max(...prices24h) : 0,
+    lowPrice24h: prices24h.length > 0 ? Math.min(...prices24h) : 0,
+    priceHistory
+  }
+}
+
+function calculatePriceChange24h(transactions: Array<{
+  price: number
+  timestamp: number
+}>): number {
+  if (!transactions || transactions.length === 0) return 0
+
+  const now = Date.now()
+  const oneDayAgo = now - 24 * 60 * 60 * 1000
+  const last24hTx = transactions
+    .filter(tx => tx.timestamp > oneDayAgo)
+    .sort((a, b) => b.timestamp - a.timestamp)
+
+  if (last24hTx.length < 2) return 0
+
+  const currentPrice = last24hTx[0].price
+  const oldestPrice = last24hTx[last24hTx.length - 1].price
+
+  if (oldestPrice === 0) return 0
+  return ((currentPrice - oldestPrice) / oldestPrice) * 100
+}
 
 export default function TokenPage({ params }: { params: { walletaddress: string } }) {
   const router = useRouter()
@@ -231,8 +329,8 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
         token_symbol: data.token_symbol,
         name: data.name,
         description: data.description,
-        price: data.current_price || 0,
-        priceChange24h: data.price_change_24h || 0,
+        price: data.market?.stats?.price || 0,
+        priceChange24h: calculatePriceChange24h(data.market?.transactions || []),
         liquidityPool: data.market_cap || 0,
         poolAddress: data.pool_address,
         creator_wallet: data.creator?.wallet_address || '',
@@ -358,7 +456,7 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
                   </div>
                 </div>
                 <div className="text-2xl font-bold font-mono">
-                  ${token.price.toFixed(4)}
+                  ${token.price.toLocaleString(undefined, { minimumFractionDigits: 10, maximumFractionDigits: 10 })}
                 </div>
               </div>
             </CardHeader>
@@ -370,7 +468,13 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
           {/* Chart */}
           <Card className="bg-black/50 border-red-600/20">
             <CardContent className="p-0">
-              <TradingViewChart data={null} symbol={token.token_symbol} />
+              <TradingViewChart 
+                data={token.market?.transactions ? transformTransactionsToOHLCV(
+                  token.market.transactions,
+                  token.market.stats?.price || 0
+                ) : null} 
+                symbol={token.token_symbol} 
+              />
             </CardContent>
           </Card>
 
@@ -398,7 +502,7 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
             </CardHeader>
             <CardContent className="space-y-4">
               <TokenStat label="Symbol" value={token.token_symbol} />
-              <TokenStat label="Price" value={`$${token.price.toFixed(4)}`} />
+              <TokenStat label="Price" value={`$${token.price.toLocaleString(undefined, { minimumFractionDigits: 10, maximumFractionDigits: 10 })}`} />
               <TokenStat label="24h Change" value={`${token.priceChange24h.toFixed(2)}%`} />
               <TokenStat label="Liquidity Pool" value={`$${token.liquidityPool.toLocaleString()}`} />
               

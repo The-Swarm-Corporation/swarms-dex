@@ -20,6 +20,7 @@ import { ComputeBudgetProgram } from "@solana/web3.js"
 import { Transaction, SystemProgram, LAMPORTS_PER_SOL } from "@solana/web3.js"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { getAssociatedTokenAddress } from "@solana/spl-token"
+import ReactConfetti from 'react-confetti'
 
 interface TokenTradingPanelProps {
   mintAddress: string
@@ -60,6 +61,11 @@ export function TokenTradingPanel({
   const [currentPoolAddress, setCurrentPoolAddress] = useState<string | null>(initialPoolAddress || null)
   const [showPoolModal, setShowPoolModal] = useState(false)
   const [additionalSwarms, setAdditionalSwarms] = useState('0')
+  const [showConfetti, setShowConfetti] = useState(false)
+  const [windowSize, setWindowSize] = useState({
+    width: typeof window !== 'undefined' ? window.innerWidth : 0,
+    height: typeof window !== 'undefined' ? window.innerHeight : 0
+  })
 
   useEffect(() => {
     if (connection) {
@@ -243,14 +249,9 @@ export function TokenTradingPanel({
     }
   };
 
-  const handlePoolTrade = async (action: "buy" | "sell", e?: React.MouseEvent) => {
+  // Modify handlePoolTrade to handle confirmation without refresh
+  const handlePoolTrade = async (action: "buy" | "sell") => {
     try {
-      // Prevent any form submission or event bubbling
-      if (e) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-      
       if (!user || !amount || !connection || !currentPoolAddress || !swapsTokenAddress) {
         toast.error("Please connect your wallet and enter an amount");
         return;
@@ -329,23 +330,27 @@ export function TokenTradingPanel({
       if (!confirmed) {
         throw new Error("Transaction failed to confirm");
       }
-      
-      toast.success(
-        <div>
-          Pool trade successful!{" "}
-          <a
-            href={`https://solscan.io/tx/${signature}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-          >
-            View on Solscan
-          </a>
-        </div>,
-        { id: toastId }
-      );
 
-      setAmount("");
+      // Handle success without triggering refresh
+      requestAnimationFrame(() => {
+        toast.success(
+          <div>
+            Pool trade successful!{" "}
+            <a
+              href={`https://solscan.io/tx/${signature}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              View on Solscan
+            </a>
+          </div>,
+          { id: toastId }
+        );
+
+        setAmount("");
+        celebrateSuccess();
+      });
       
     } catch (error) {
       console.error("Pool trade failed:", error);
@@ -583,6 +588,7 @@ export function TokenTradingPanel({
           
           // Notify parent component
           onPoolCreated?.(poolAddress);
+          celebrateSuccess();
           return;
         }
 
@@ -601,7 +607,7 @@ export function TokenTradingPanel({
           } = details;
 
           // Add extra SOL for the transfer transaction itself
-          const transferGasFee = 0.000005; // Base gas fee for transfer
+          const transferGasFee = 0.00005; // Base gas fee for transfer
           const totalNeeded = neededAmount + transferGasFee;
 
           toast.loading(
@@ -712,53 +718,222 @@ export function TokenTradingPanel({
     }
   };
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    return false;
+  };
+
+  const handleButtonClick = async (action: "buy" | "sell", e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isLoading) {
+      await handlePoolTrade(action);
+    }
+    return false;
+  };
+
   useEffect(() => {
-    // Prevent form submissions within the trading panel
-    const handleFormSubmit = (e: Event) => {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    };
+    const handleResize = () => {
+      setWindowSize({
+        width: window.innerWidth,
+        height: window.innerHeight
+      })
+    }
 
-    const forms = document.querySelectorAll('form');
-    forms.forEach(form => {
-      form.addEventListener('submit', handleFormSubmit, true);
-    });
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
 
-    return () => {
-      forms.forEach(form => {
-        form.removeEventListener('submit', handleFormSubmit, true);
-      });
-    };
-  }, []);
+  const celebrateSuccess = () => {
+    setShowConfetti(true)
+    setTimeout(() => setShowConfetti(false), 5000) // Stop confetti after 5 seconds
+  }
 
   return (
-    <Card className="bg-black/50 border-red-600/20">
-      <CardHeader>
-        <CardTitle className="text-xl font-bold">Trade {symbol}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {!currentPoolAddress ? (
-          <div className="space-y-4">
-            {showCreatePool ? (
-              <>
-                <p className="text-sm text-gray-400">No liquidity pool exists for this token yet. As the token creator, you can create one to enable trading.</p>
-                <form 
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    return false;
-                  }} 
-                  className="space-y-4" 
-                  noValidate
-                >
-                  <div className="pt-4">
-                      <Label>Additional SWARMS (Optional)</Label>
+    <div className="relative">
+      <Card className="bg-black/50 border-red-600/20">
+        <CardHeader>
+          <CardTitle className="text-xl font-bold">Trade {symbol}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!currentPoolAddress ? (
+            <div className="space-y-4">
+              {showCreatePool ? (
+                <>
+                  <p className="text-sm text-gray-400">No liquidity pool exists for this token yet. As the token creator, you can create one to enable trading.</p>
+                  <form 
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      return false;
+                    }} 
+                    className="space-y-4" 
+                    noValidate
+                  >
+                    <div className="pt-4">
+                        <Label>Additional SWARMS (Optional)</Label>
+                        <Input
+                          type="number"
+                          placeholder="Enter additional SWARMS amount"
+                          value={additionalSwarms}
+                          onChange={(e) => setAdditionalSwarms(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              return false;
+                            }
+                          }}
+                          className="bg-black/50 border-red-600/20 focus:border-red-600 mt-2"
+                        />
+                        <div className="text-xs text-gray-400 space-y-1 mt-2">
+                          <div>Current SWARMS in bonding curve: {initialSwarmsAmount}</div>
+                          {additionalSwarms !== '0' && (
+                            <div className="bg-black/20 p-2 rounded">
+                              <div>+ {additionalSwarms} SWARMS (new deposit)</div>
+                              <div>= {Number(initialSwarmsAmount) + Number(additionalSwarms)} SWARMS total</div>
+                            </div>
+                          )}
+                        </div>
+                      <Button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleCreatePool();
+                          return false;
+                        }}
+                        disabled={isLoading}
+                        className="w-full mt-4 bg-red-600 hover:bg-red-700"
+                      >
+                        {isLoading ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            {additionalSwarms !== '0' ? 'Depositing SWARMS & Creating Pool...' : 'Creating Pool...'}
+                          </>
+                        ) : (
+                          additionalSwarms !== '0' ? 'Deposit SWARMS & Create Pool' : 'Create Pool'
+                        )}
+                      </Button>
+                    </div>
+                  </form>
+                </>
+              ) : (
+                <p className="text-sm text-gray-400">No liquidity pool has been established for this token yet. Trading will be enabled once the token creator creates a pool.</p>
+              )}
+            </div>
+          ) : (
+            <form 
+              onSubmit={handleSubmit}
+              className="w-full"
+              noValidate
+            >
+              <Tabs defaultValue="buy" onValueChange={() => setAmount("")}>
+                <TabsList className="grid w-full grid-cols-2 bg-black/50">
+                  <TabsTrigger 
+                    type="button"
+                    value="buy" 
+                    className="data-[state=active]:bg-red-600"
+                  >
+                    Buy
+                  </TabsTrigger>
+                  <TabsTrigger 
+                    type="button"
+                    value="sell" 
+                    className="data-[state=active]:bg-gray-600"
+                  >
+                    Sell
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="buy">
+                  <div className="space-y-4 pt-4">
+                    <div className="space-y-2">
+                      <Label>Amount (SWARMS)</Label>
                       <Input
                         type="number"
-                        placeholder="Enter additional SWARMS amount"
-                        value={additionalSwarms}
-                        onChange={(e) => setAdditionalSwarms(e.target.value)}
+                        placeholder="Enter SWARMS amount"
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                          }
+                        }}
+                        className="bg-black/50 border-red-600/20 focus:border-red-600"
+                      />
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs text-gray-400">Slippage:</p>
+                          <div className="flex items-center gap-1">
+                            <Input
+                              type="number"
+                              value={slippage}
+                              onChange={handleSlippageChange}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  return false;
+                                }
+                              }}
+                              className="w-16 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
+                              min="0.1"
+                              max="100"
+                              step="0.1"
+                            />
+                            <span className="text-xs text-gray-400">%</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs text-gray-400">Gas (SOL):</p>
+                          <div className="flex items-center gap-1">
+                            <Input
+                              type="number"
+                              value={gasFee}
+                              onChange={handleGasFeeChange}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  return false;
+                                }
+                              }}
+                              className="w-24 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
+                              min="0.000005"
+                              step="0.000001"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      className="w-full bg-red-600 hover:bg-red-700"
+                      onClick={(e) => handleButtonClick("buy", e)}
+                      disabled={isLoading}
+                    >
+                      {isLoading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Processing...
+                        </>
+                      ) : (
+                        `Buy ${symbol} with SWARMS`
+                      )}
+                    </Button>
+                  </div>
+                </TabsContent>
+                <TabsContent value="sell">
+                  <div className="space-y-4 pt-4">
+                    <div className="space-y-2">
+                      <Label>Amount ({symbol})</Label>
+                      <Input
+                        type="number"
+                        placeholder={`Enter ${symbol} amount`}
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault();
@@ -766,245 +941,86 @@ export function TokenTradingPanel({
                             return false;
                           }
                         }}
-                        className="bg-black/50 border-red-600/20 focus:border-red-600 mt-2"
+                        className="bg-black/50 border-gray-600/20 focus:border-gray-600"
                       />
-                      <div className="text-xs text-gray-400 space-y-1 mt-2">
-                        <div>Current SWARMS in bonding curve: {initialSwarmsAmount}</div>
-                        {additionalSwarms !== '0' && (
-                          <div className="bg-black/20 p-2 rounded">
-                            <div>+ {additionalSwarms} SWARMS (new deposit)</div>
-                            <div>= {Number(initialSwarmsAmount) + Number(additionalSwarms)} SWARMS total</div>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs text-gray-400">Slippage:</p>
+                          <div className="flex items-center gap-1">
+                            <Input
+                              type="number"
+                              value={slippage}
+                              onChange={handleSlippageChange}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  return false;
+                                }
+                              }}
+                              className="w-16 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
+                              min="0.1"
+                              max="100"
+                              step="0.1"
+                            />
+                            <span className="text-xs text-gray-400">%</span>
                           </div>
-                        )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs text-gray-400">Gas (SOL):</p>
+                          <div className="flex items-center gap-1">
+                            <Input
+                              type="number"
+                              value={gasFee}
+                              onChange={handleGasFeeChange}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  return false;
+                                }
+                              }}
+                              className="w-24 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
+                              min="0.000005"
+                              step="0.000001"
+                            />
+                          </div>
+                        </div>
                       </div>
+                    </div>
                     <Button
                       type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        handleCreatePool();
-                        return false;
-                      }}
+                      className="w-full bg-gray-600 hover:bg-gray-700"
+                      onClick={(e) => handleButtonClick("sell", e)}
                       disabled={isLoading}
-                      className="w-full mt-4 bg-red-600 hover:bg-red-700"
                     >
                       {isLoading ? (
                         <>
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          {additionalSwarms !== '0' ? 'Depositing SWARMS & Creating Pool...' : 'Creating Pool...'}
+                          Processing...
                         </>
                       ) : (
-                        additionalSwarms !== '0' ? 'Deposit SWARMS & Create Pool' : 'Create Pool'
+                        `Sell ${symbol} for SWARMS`
                       )}
                     </Button>
                   </div>
-                </form>
-              </>
-            ) : (
-              <p className="text-sm text-gray-400">No liquidity pool has been established for this token yet. Trading will be enabled once the token creator creates a pool.</p>
-            )}
-          </div>
-        ) : (
-          <form 
-            onSubmit={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              return false;
-            }} 
-            noValidate 
-            className="w-full"
-          >
-            <Tabs defaultValue="buy" onValueChange={() => setAmount("")}>
-              <TabsList className="grid w-full grid-cols-2 bg-black/50">
-                <TabsTrigger 
-                  type="button"
-                  value="buy" 
-                  className="data-[state=active]:bg-red-600"
-                >
-                  Buy
-                </TabsTrigger>
-                <TabsTrigger 
-                  type="button"
-                  value="sell" 
-                  className="data-[state=active]:bg-gray-600"
-                >
-                  Sell
-                </TabsTrigger>
-              </TabsList>
-              <TabsContent value="buy">
-                <div className="space-y-4 pt-4">
-                  <div className="space-y-2">
-                    <Label>Amount (SWARMS)</Label>
-                    <Input
-                      type="number"
-                      placeholder="Enter SWARMS amount"
-                      value={amount}
-                      onChange={(e) => setAmount(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          return false;
-                        }
-                      }}
-                      className="bg-black/50 border-red-600/20 focus:border-red-600"
-                    />
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <p className="text-xs text-gray-400">Slippage:</p>
-                        <div className="flex items-center gap-1">
-                          <Input
-                            type="number"
-                            value={slippage}
-                            onChange={handleSlippageChange}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                return false;
-                              }
-                            }}
-                            className="w-16 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
-                            min="0.1"
-                            max="100"
-                            step="0.1"
-                          />
-                          <span className="text-xs text-gray-400">%</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <p className="text-xs text-gray-400">Gas (SOL):</p>
-                        <div className="flex items-center gap-1">
-                          <Input
-                            type="number"
-                            value={gasFee}
-                            onChange={handleGasFeeChange}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                return false;
-                              }
-                            }}
-                            className="w-24 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
-                            min="0.000005"
-                            step="0.000001"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    className="w-full bg-red-600 hover:bg-red-700"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      handlePoolTrade("buy", e);
-                      return false;
-                    }}
-                    disabled={isLoading}
-                  >
-                    {isLoading ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Processing...
-                      </>
-                    ) : (
-                      `Buy ${symbol} with SWARMS`
-                    )}
-                  </Button>
-                </div>
-              </TabsContent>
-              <TabsContent value="sell">
-                <div className="space-y-4 pt-4">
-                  <div className="space-y-2">
-                    <Label>Amount ({symbol})</Label>
-                    <Input
-                      type="number"
-                      placeholder={`Enter ${symbol} amount`}
-                      value={amount}
-                      onChange={(e) => setAmount(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          return false;
-                        }
-                      }}
-                      className="bg-black/50 border-gray-600/20 focus:border-gray-600"
-                    />
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <p className="text-xs text-gray-400">Slippage:</p>
-                        <div className="flex items-center gap-1">
-                          <Input
-                            type="number"
-                            value={slippage}
-                            onChange={handleSlippageChange}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                return false;
-                              }
-                            }}
-                            className="w-16 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
-                            min="0.1"
-                            max="100"
-                            step="0.1"
-                          />
-                          <span className="text-xs text-gray-400">%</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <p className="text-xs text-gray-400">Gas (SOL):</p>
-                        <div className="flex items-center gap-1">
-                          <Input
-                            type="number"
-                            value={gasFee}
-                            onChange={handleGasFeeChange}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                return false;
-                              }
-                            }}
-                            className="w-24 h-6 text-xs bg-black/50 border-red-600/20 focus:border-red-600"
-                            min="0.000005"
-                            step="0.000001"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    className="w-full bg-gray-600 hover:bg-gray-700"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      handlePoolTrade("sell", e);
-                      return false;
-                    }}
-                    disabled={isLoading}
-                  >
-                    {isLoading ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Processing...
-                      </>
-                    ) : (
-                      `Sell ${symbol} for SWARMS`
-                    )}
-                  </Button>
-                </div>
-              </TabsContent>
-            </Tabs>
-          </form>
-        )}
-      </CardContent>
-    </Card>
+                </TabsContent>
+              </Tabs>
+            </form>
+          )}
+        </CardContent>
+      </Card>
+      {showConfetti && (
+        <ReactConfetti
+          width={windowSize.width}
+          height={windowSize.height}
+          recycle={false}
+          numberOfPieces={500}
+          gravity={0.3}
+          colors={['#ef4444', '#dc2626', '#b91c1c', '#7f1d1d', '#fbbf24']}
+          style={{ position: 'fixed', top: 0, left: 0, zIndex: 100 }}
+        />
+      )}
+    </div>
   )
 }

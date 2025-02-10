@@ -38,7 +38,7 @@ export function OrderBook({ mintAddress, symbol, transactions }: OrderBookProps)
             {sortedTransactions.map((tx) => (
               <div key={tx.signature} className="grid grid-cols-4 text-xs font-mono">
                 <span className={tx.side === 'buy' ? 'text-green-500' : 'text-red-500'}>
-                  ${tx.price.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 })}
+                  ${tx.price.toLocaleString(undefined, { minimumFractionDigits: 10, maximumFractionDigits: 10 })}
                 </span>
                 <span className="text-right">
                   {tx.size.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}

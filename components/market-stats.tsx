@@ -9,7 +9,6 @@ interface MarketStatsProps {
   poolData: {
     price: number
     volume24h: number
-    tvl: number
     apy: number
   } | null
 }
@@ -43,19 +42,13 @@ export function MarketStats({ mintAddress, symbol, poolData }: MarketStatsProps)
         <div className="space-y-4">
           <div className="flex justify-between items-center">
             <span className="text-gray-400">Price</span>
-            <span className="font-mono font-medium">${(poolData?.price || 0).toFixed(4)}</span>
+            <span className="font-mono font-medium">
+              ${(poolData?.price || 0).toLocaleString(undefined, { minimumFractionDigits: 13, maximumFractionDigits: 13 })}
+            </span>
           </div>
           <div className="flex justify-between items-center">
             <span className="text-gray-400">24h Volume</span>
             <span className="font-mono font-medium">${(poolData?.volume24h || 0).toLocaleString()}</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-gray-400">TVL</span>
-            <span className="font-mono font-medium">${(poolData?.tvl || 0).toLocaleString()}</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-gray-400">APY</span>
-            <span className="font-mono font-medium">{(poolData?.apy || 0).toFixed(2)}%</span>
           </div>
         </div>
       </CardContent>

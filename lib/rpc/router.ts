@@ -36,7 +36,7 @@ export class RpcRouter {
 
   private getNextEndpoint(): RpcEndpoint {
     const now = Date.now()
-    
+
     // Reset endpoints that have recovered
     this.endpoints.forEach(endpoint => {
       if (endpoint.isDown && (now - endpoint.lastFailure) > this.recoveryTimeMs) {
@@ -56,7 +56,7 @@ export class RpcRouter {
       })
       logger.warn('All RPC endpoints were down, resetting all endpoints')
       return this.endpoints[0]
-    }
+  }
 
     // Round-robin through available endpoints
     this.currentIndex = (this.currentIndex + 1) % availableEndpoints.length
@@ -72,7 +72,7 @@ export class RpcRouter {
       logger.warn('RPC endpoint marked as down', { 
         url: endpoint.url, 
         failures: endpoint.failureCount 
-      })
+    })
     }
   }
 
@@ -102,14 +102,14 @@ export class RpcRouter {
         if (attempt < maxRetries - 1) {
           logger.warn('RPC request failed, retrying with different endpoint', {
             url: endpoint.url,
-            attempt: attempt + 1,
-            error: lastError.message
-          })
+          attempt: attempt + 1,
+          error: lastError.message
+        })
           await new Promise(resolve => setTimeout(resolve, delayMs))
         }
       }
     }
-
+    
     throw lastError || new Error('Operation failed after all retries')
   }
 }

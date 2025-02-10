@@ -5,6 +5,7 @@ import { Connection, PublicKey } from "@solana/web3.js"
 import { rpcRouter } from "@/lib/rpc/router"
 import { deriveCustomizablePermissionlessConstantProductPoolAddress, createProgram } from "@mercurial-finance/dynamic-amm-sdk/dist/cjs/src/amm/utils"
 import AmmImpl from "@mercurial-finance/dynamic-amm-sdk"
+import { parseSwapTransaction } from "@/app/api/solana/meteora/transactions/route"
 
 // Check if required environment variables are set
 if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
@@ -56,6 +57,13 @@ async function getMarketData(tokenMint: PublicKey, swarmsMint: PublicKey) {
       .eq('mint_address', tokenMint.toString())
       .single()
 
+    logger.info("Cache check result", {
+      hasCachedData: !!cachedData,
+      cacheError: cacheError?.message,
+      cacheAge: cachedData ? `${Math.round((Date.now() - new Date(cachedData.updated_at).getTime()) / 1000)}s` : 'no cache',
+      mintAddress: tokenMint.toString()
+    })
+
     if (!cacheError && cachedData) {
       const cacheAge = Date.now() - new Date(cachedData.updated_at).getTime()
       if (cacheAge < 60 * 1000) { // 1 minute cache
@@ -63,13 +71,19 @@ async function getMarketData(tokenMint: PublicKey, swarmsMint: PublicKey) {
           mintAddress: tokenMint.toString(),
           cacheAge: `${Math.round(cacheAge / 1000)}s`,
           stats: cachedData.data.stats,
-          poolAddress: cachedData.data.pool.address
+          poolAddress: cachedData.data.pool.address,
+          lastUpdate: new Date(cachedData.updated_at).toISOString()
         })
         return cachedData.data
       }
     }
 
   return await rpcRouter.withRetry(async (connection) => {
+    logger.info("Fetching fresh market data", {
+      mintAddress: tokenMint.toString(),
+      timestamp: new Date().toISOString()
+    })
+
     const poolKey = deriveCustomizablePermissionlessConstantProductPoolAddress(
       tokenMint,
       swarmsMint,
@@ -98,45 +112,32 @@ async function getMarketData(tokenMint: PublicKey, swarmsMint: PublicKey) {
       throw new Error("Failed to get pool state")
     }
 
-    // Get vault addresses from pool state
-    const tokenVaultAddress = pool.aVault.toString()
-    const swarmsVaultAddress = pool.bVault.toString()
+    // Determine which vault is which by checking the mint addresses
+    const isTokenVaultA = pool.tokenAMint.toString() === tokenMint.toString()
+    const tokenDecimals = 6 // Standard Solana token decimals
+    const tokenBalance = Number(isTokenVaultA ? pool.aVaultLp : pool.bVaultLp) / Math.pow(10, tokenDecimals)
+    const swarmsBalance = Number(isTokenVaultA ? pool.bVaultLp : pool.aVaultLp) / Math.pow(10, tokenDecimals)
+    const tokenVaultAddress = isTokenVaultA ? pool.aVault.toString() : pool.bVault.toString()
+    const swarmsVaultAddress = isTokenVaultA ? pool.bVault.toString() : pool.aVault.toString()
 
     logger.info("Pool vaults identified", {
       poolAddress: poolKey.toString(),
       tokenVaultAddress,
       swarmsVaultAddress,
-      tokenVaultLp: pool.aVaultLp.toString(),
-      swarmsVaultLp: pool.bVaultLp.toString()
+      tokenVaultLp: isTokenVaultA ? pool.aVaultLp.toString() : pool.bVaultLp.toString(),
+      swarmsVaultLp: isTokenVaultA ? pool.bVaultLp.toString() : pool.aVaultLp.toString(),
+      isTokenVaultA,
+      tokenMint: tokenMint.toString(),
+      swarmsMint: swarmsMint.toString(),
+      poolTokenAMint: pool.tokenAMint.toString(),
+      poolTokenBMint: pool.tokenBMint.toString()
     })
 
-    const tokenBalance = Number(pool.aVaultLp)
-    const swarmsBalance = Number(pool.bVaultLp)
-    const priceInSwarms = swarmsBalance > 0 ? tokenBalance / swarmsBalance : 0
+    // Calculate price in the same format as Meteora's swap price
+    // Price = SWARMS amount / token amount (matching transaction price calculation)
+    const priceInSwarms = tokenBalance > 0 ? swarmsBalance / tokenBalance : 0 
     const swarmsPrice = await fetchSwarmsPrice() ?? 1 // Fallback to 1 if price fetch fails
-    const tokenPrice = priceInSwarms * swarmsPrice
-
-    logger.info("Using SWARMS price from CoinGecko", { swarmsPrice })
-
-    const tvl = tokenPrice * tokenBalance * 2
-    const volume24h = tvl * 0.1 // TODO: Calculate actual 24h volume
-    const apy = amm.isStablePool ? 10 : 5 // TODO: Calculate actual APY
-
-    logger.info("Calculated pool stats", {
-      mintAddress: tokenMint.toString(),
-      poolAddress: poolKey.toString(),
-      tokenBalance,
-      swarmsBalance,
-      priceInSwarms,
-      tokenPrice,
-      tvl,
-      volume24h,
-      apy,
-      fees: {
-        tradeFee: Number(pool.fees.tradeFeeNumerator) / 10000,
-        ownerTradeFee: Number(pool.fees.protocolTradeFeeNumerator) / 10000,
-      }
-    })
+    let tokenPrice = priceInSwarms * swarmsPrice // Price in USD
 
     // Fetch recent transactions with vault addresses
     const transactions = await getRecentTransactions(
@@ -145,19 +146,83 @@ async function getMarketData(tokenMint: PublicKey, swarmsMint: PublicKey) {
       tokenMint, 
       swarmsMint,
       {
-        tokenVaultAddress: pool.aVault.toString(),
-        swarmsVaultAddress: pool.bVault.toString()
+        tokenVaultAddress,
+        swarmsVaultAddress
       }
     )
 
-    logger.info("Found recent signatures", {
+    // Validate price against recent transactions
+    if (transactions.length > 0) {
+      const recentTxPrice = transactions[0].price * swarmsPrice
+      logger.info("Price validation", {
+        calculatedPrice: tokenPrice,
+        recentTxPrice,
+        difference: Math.abs(tokenPrice - recentTxPrice),
+        percentDiff: Math.abs((tokenPrice - recentTxPrice) / recentTxPrice) * 100,
+        calculation: {
+          pool: `(${swarmsBalance} / ${tokenBalance}) * ${swarmsPrice}`,
+          transaction: `(${transactions[0].price}) * ${swarmsPrice}`
+        }
+      })
+
+      // If pool price seems off compared to transactions, use tx price
+      if (tokenPrice === 0 || Math.abs((tokenPrice - recentTxPrice) / recentTxPrice) > 0.1) { // 10% difference threshold
+        tokenPrice = recentTxPrice
+        logger.info("Using transaction price instead of pool price", {
+          reason: tokenPrice === 0 ? "Pool price is zero" : "Large price difference",
+          poolPrice: tokenPrice,
+          txPrice: recentTxPrice,
+          poolCalculation: `(${swarmsBalance} / ${tokenBalance}) * ${swarmsPrice}`,
+          txCalculation: `${transactions[0].price} * ${swarmsPrice}`
+        })
+      }
+    }
+
+    logger.info("Price calculation details", {
+      poolBalances: {
+        token: tokenBalance,
+        swarms: swarmsBalance
+      },
+      priceCalculation: {
+        priceInSwarms,
+        swarmsPrice,
+        tokenPrice,
+        formula: `(${swarmsBalance} / ${tokenBalance}) * ${swarmsPrice}`
+      },
+      transactions: transactions.slice(0, 3).map(tx => ({
+        price: tx.price * swarmsPrice,
+        size: tx.size,
+        timestamp: new Date(tx.timestamp).toISOString()
+      }))
+    })
+
+    logger.info("Using SWARMS price from CoinGecko", { swarmsPrice })
+
+    // Calculate 24h volume from transactions
+    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000
+    const volume24h = transactions
+      .filter(tx => tx.timestamp > oneDayAgo)
+      .reduce((sum, tx) => sum + (tx.price * tx.size * swarmsPrice), 0)
+
+    // Calculate APY based on fees and volume
+    const tradeFeePercent = Number(pool.fees.tradeFeeNumerator) / 10000
+    const dailyFees = volume24h * tradeFeePercent
+    const yearlyFeesEstimate = dailyFees * 365
+    const apy = volume24h > 0 ? (yearlyFeesEstimate / volume24h) * 100 : 0
+
+    logger.info("Calculated pool stats", {
       mintAddress: tokenMint.toString(),
       poolAddress: poolKey.toString(),
-      count: transactions.length,
-      transactions: transactions.map(tx => ({
-        signature: tx.signature,
-        blockTime: tx.timestamp ? new Date(tx.timestamp * 1000).toISOString() : 'unknown'
-      }))
+      tokenBalance,
+      swarmsBalance,
+      priceInSwarms,
+      tokenPrice,
+      volume24h,
+      apy,
+      fees: {
+        tradeFee: tradeFeePercent,
+        ownerTradeFee: Number(pool.fees.protocolTradeFeeNumerator) / 10000,
+      }
     })
 
     const marketData = {
@@ -165,25 +230,24 @@ async function getMarketData(tokenMint: PublicKey, swarmsMint: PublicKey) {
         address: poolKey.toString(),
         tokenMint: tokenMint.toString(),
         swarmsMint: swarmsMint.toString(),
-      tokenBalance: tokenBalance.toString(),
-      swarmsBalance: swarmsBalance.toString(),
+        tokenBalance: tokenBalance.toString(),
+        swarmsBalance: swarmsBalance.toString(),
         fees: {
-        tradeFee: Number(pool.fees.tradeFeeNumerator) / 10000,
-        ownerTradeFee: Number(pool.fees.protocolTradeFeeNumerator) / 10000,
+          tradeFee: tradeFeePercent,
+          ownerTradeFee: Number(pool.fees.protocolTradeFeeNumerator) / 10000,
         },
       },
       stats: {
-      price: tokenPrice,
-      priceInSwarms,
-      volume24h,
-      tvl,
-      apy
+        price: tokenPrice,
+        priceInSwarms,
+        volume24h,
+        apy
       },
-    transactions: transactions
+      transactions: transactions // Return raw transaction prices in SWARMS
     }
 
     // Update cache
-    await supabase
+    const cacheUpdate = await supabase
       .from('meteora_pool_stats')
       .upsert({
         mint_address: tokenMint.toString(),
@@ -191,8 +255,15 @@ async function getMarketData(tokenMint: PublicKey, swarmsMint: PublicKey) {
         updated_at: new Date().toISOString()
       })
 
+    logger.info("Cache update result", {
+      mintAddress: tokenMint.toString(),
+      success: !cacheUpdate.error,
+      error: cacheUpdate.error?.message,
+      timestamp: new Date().toISOString()
+    })
+
     return marketData
-})
+  })
 }
 
 async function getRecentTransactions(
@@ -205,20 +276,6 @@ async function getRecentTransactions(
     swarmsVaultAddress: string
   }
 ) {
-  const { tokenVaultAddress, swarmsVaultAddress } = vaultAddresses
-  // Get token decimals first
-  const [tokenMintInfo, swarmsMintInfo] = await Promise.all([
-    connection.getParsedAccountInfo(tokenMint),
-    connection.getParsedAccountInfo(swarmsMint)
-  ])
-
-  if (!tokenMintInfo.value?.data || !swarmsMintInfo.value?.data) {
-    throw new Error('Failed to fetch mint info')
-  }
-
-  const tokenDecimals = (tokenMintInfo.value.data as any).parsed.info.decimals
-  const swarmsDecimals = (swarmsMintInfo.value.data as any).parsed.info.decimals
-
   // Get recent signatures with retries
   const signatures = await rpcRouter.withRetry(async () => {
     return await connection.getSignaturesForAddress(
@@ -244,193 +301,31 @@ async function getRecentTransactions(
     )
   })
 
-  // Process transactions
+  // Process transactions using the shared parser
   const transactions = []
   for (let i = 0; i < parsedTransactions.length; i++) {
     const tx = parsedTransactions[i]
     const sig = signatures[i]
     
-    if (!tx?.meta?.postTokenBalances || !tx?.meta?.preTokenBalances) {
-      logger.info("Skipping transaction - no token balances", { 
-        signature: sig.signature,
-        rawTransaction: JSON.stringify(tx, null, 2)
-      })
+    if (!tx) {
+      logger.info("Skipping transaction - not found", { signature: sig.signature })
       continue
     }
 
-    // Log raw transaction data for debugging
-    logger.info("Raw transaction data", {
-      signature: sig.signature,
-      version: tx.version,
-      signatures: tx.transaction.signatures,
-      message: tx.transaction.message,
-      accountKeys: tx.transaction.message.accountKeys,
-      instructions: tx.transaction.message.instructions,
-      recentBlockhash: tx.transaction.message.recentBlockhash,
-      meta: {
-        err: tx.meta.err,
-        fee: tx.meta.fee,
-        preBalances: tx.meta.preBalances,
-        postBalances: tx.meta.postBalances,
-        logMessages: tx.meta.logMessages,
-        preTokenBalances: tx.meta.preTokenBalances,
-        postTokenBalances: tx.meta.postTokenBalances,
-      }
+    // Use the shared transaction parser
+    const swapDetails = parseSwapTransaction(tx, tokenMint, swarmsMint, {
+      tokenVault: vaultAddresses.tokenVaultAddress,
+      swarmsVault: vaultAddresses.swarmsVaultAddress
     })
 
-    // Check if this is a swap transaction by looking for the swap instruction
-    const isSwap = tx.meta.logMessages?.some(log => 
-      log.includes('Program log: Instruction: Swap') || 
-      log.includes('Program log: Instruction: SwapExactInput') ||
-      log.includes('Program log: Instruction: SwapExactOutput')
-    )
-
-    if (!isSwap) {
-      logger.info("Skipping transaction - not a swap", { 
-        signature: sig.signature,
-        logs: tx.meta.logMessages
-      })
+    if (!swapDetails) {
+      logger.info("Skipping transaction - not a valid swap", { signature: sig.signature })
       continue
     }
-
-    // Find token balances for both sides of the swap
-    const preTokenBalance = tx.meta.preTokenBalances.find(b => b.mint === tokenMint.toString())
-    const postTokenBalance = tx.meta.postTokenBalances.find(b => b.mint === tokenMint.toString())
-    const preSwarmsBalance = tx.meta.preTokenBalances.find(b => b.mint === swarmsMint.toString())
-    const postSwarmsBalance = tx.meta.postTokenBalances.find(b => b.mint === swarmsMint.toString())
-
-    if (!preTokenBalance?.uiTokenAmount?.uiAmount || !postTokenBalance?.uiTokenAmount?.uiAmount || 
-        !preSwarmsBalance?.uiTokenAmount?.uiAmount || !postSwarmsBalance?.uiTokenAmount?.uiAmount) {
-      logger.info("Skipping transaction - missing balance data", {
-        signature: sig.signature,
-        hasPreToken: !!preTokenBalance?.uiTokenAmount?.uiAmount,
-        hasPostToken: !!postTokenBalance?.uiTokenAmount?.uiAmount,
-        hasPreSwarms: !!preSwarmsBalance?.uiTokenAmount?.uiAmount,
-        hasPostSwarms: !!postSwarmsBalance?.uiTokenAmount?.uiAmount,
-        preTokenBalance,
-        postTokenBalance,
-        preSwarmsBalance,
-        postSwarmsBalance
-      })
-      continue
-    }
-
-    // Calculate changes in balances
-    const tokenChange = postTokenBalance.uiTokenAmount.uiAmount - preTokenBalance.uiTokenAmount.uiAmount
-    const swarmsChange = postSwarmsBalance.uiTokenAmount.uiAmount - preSwarmsBalance.uiTokenAmount.uiAmount
-
-    // Skip if no significant changes
-    if (Math.abs(tokenChange) < 0.000001 || Math.abs(swarmsChange) < 0.000001) {
-      logger.info("Skipping transaction - insignificant changes", {
-        signature: sig.signature,
-        tokenChange,
-        swarmsChange
-      })
-      continue
-    }
-
-    // First identify which account is the pool
-    const poolAddress = poolKey.toString()
-    
-    // Check if this is a pool account by looking at the specific vault addresses
-    const tokenVaultAccount = tx.meta.preTokenBalances.find(b => 
-      b.mint === tokenMint.toString() && 
-      b.owner === tokenVaultAddress
-    )
-    const swarmsVaultAccount = tx.meta.preTokenBalances.find(b => 
-      b.mint === swarmsMint.toString() && 
-      b.owner === swarmsVaultAddress
-    )
-
-    if (!tokenVaultAccount || !swarmsVaultAccount) {
-      logger.info("Skipping transaction - couldn't identify pool vaults", {
-        signature: sig.signature,
-        poolAddress,
-        foundTokenVault: !!tokenVaultAccount,
-        foundSwarmsVault: !!swarmsVaultAccount,
-        expectedTokenVault: tokenVaultAddress,
-        expectedSwarmsVault: swarmsVaultAddress,
-        actualTokenVaultOwner: tokenVaultAccount?.owner,
-        actualSwarmsVaultOwner: swarmsVaultAccount?.owner
-      })
-      continue
-    }
-
-    // Find the swapper's accounts (non-vault accounts)
-    const swapperTokenAccount = tx.meta.preTokenBalances.find(b => 
-      b.mint === tokenMint.toString() && 
-      b.owner !== tokenVaultAddress
-    )
-    const swapperSwarmsAccount = tx.meta.preTokenBalances.find(b => 
-      b.mint === swarmsMint.toString() && 
-      b.owner !== swarmsVaultAddress
-    )
-
-    if (!swapperTokenAccount && !swapperSwarmsAccount) {
-      logger.info("Skipping transaction - couldn't identify swapper accounts", {
-        signature: sig.signature
-      })
-      continue
-    }
-
-    // If token vault balance increased, it's a sell (swapper sold tokens to pool)
-    // If token vault balance decreased, it's a buy (swapper bought tokens from pool)
-    const vaultPreAmount = tokenVaultAccount?.uiTokenAmount?.uiAmount ?? 0
-    const vaultPostAmount = tx.meta.postTokenBalances.find(b => 
-      b.accountIndex === tokenVaultAccount?.accountIndex
-    )?.uiTokenAmount?.uiAmount ?? 0
-    const vaultTokenChange = vaultPostAmount - vaultPreAmount
-
-    const isBuy = vaultTokenChange < 0  // If vault balance decreased, it's a buy
-
-    // For buys: token amount is what left the vault
-    // For sells: token amount is what entered the vault
-    const tokenAmount = Math.abs(vaultTokenChange)
-    const swarmsAmount = Math.abs(swarmsChange)
-    
-    // Calculate price in SWARMS per token
-    const price = swarmsAmount / tokenAmount
-
-    // Get the swapper's wallet address
-    const swapperAddress = swapperTokenAccount?.owner || swapperSwarmsAccount?.owner
-
-    logger.info("Valid swap transaction found", {
-      signature: sig.signature,
-      side: isBuy ? 'buy' : 'sell',
-      tokenAmount,
-      swarmsAmount,
-      price,
-      swapper: swapperAddress,
-      signers: tx.transaction.message.accountKeys
-        .filter(key => key.signer)
-        .map(key => key.pubkey),
-      timestamp: sig.blockTime ? new Date(sig.blockTime * 1000).toISOString() : new Date().toISOString(),
-      preTokenBalance: preTokenBalance.uiTokenAmount.uiAmount,
-      postTokenBalance: postTokenBalance.uiTokenAmount.uiAmount,
-      preSwarmsBalance: preSwarmsBalance.uiTokenAmount.uiAmount,
-      postSwarmsBalance: postSwarmsBalance.uiTokenAmount.uiAmount,
-      tokenDecimals: preTokenBalance.uiTokenAmount.decimals,
-      swarmsDecimals: preSwarmsBalance.uiTokenAmount.decimals,
-      poolAddress,
-      swapperTokenAccountIndex: swapperTokenAccount?.accountIndex,
-      swapperSwarmsAccountIndex: swapperSwarmsAccount?.accountIndex,
-      instructions: tx.transaction.message.instructions,
-      logs: tx.meta.logMessages
-    })
 
     transactions.push({
-      signature: sig.signature,
-      price,
-      size: tokenAmount,
-      side: isBuy ? 'buy' : 'sell',
-      swapper: swapperAddress,
-      signers: tx.transaction.message.accountKeys
-        .filter(key => key.signer)
-        .map(key => key.pubkey),
-      timestamp: sig.blockTime ? sig.blockTime * 1000 : Date.now(),
-      tokenDecimals,
-      swarmsDecimals,
-      swarmsAmount
+      ...swapDetails,
+      timestamp: sig.blockTime ? sig.blockTime * 1000 : Date.now()
     })
   }
 
@@ -502,16 +397,25 @@ export async function GET(
     if (marketData) {
       agent.market = marketData
       // Update agent with latest price data
-      await supabase
+      const agentUpdate = await supabase
         .from('web3agents')
         .update({
           current_price: marketData.stats.price,
-          market_cap: marketData.stats.tvl,
+          market_cap: marketData.stats.volume24h,
           volume_24h: marketData.stats.volume24h,
           pool_address: marketData.pool.address,
           updated_at: new Date().toISOString()
         })
         .eq('mint_address', mintAddress)
+
+      logger.info("Agent update result", {
+        mintAddress,
+        success: !agentUpdate.error,
+        error: agentUpdate.error?.message,
+        newPrice: marketData.stats.price,
+        newVolume: marketData.stats.volume24h,
+        timestamp: new Date().toISOString()
+      })
     }
 
     logger.info("Successfully fetched agent details", {

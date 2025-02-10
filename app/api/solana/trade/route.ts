@@ -17,7 +17,7 @@ export async function POST(req: Request) {
       swapsTokenAddress,
       poolAddress,
       slippage = 1, // Default to 1% slippage
-      priorityFee = 50000 // Default to 50k microlamports
+      priorityFee = 500000 // Default to 500k microlamports
     } = await req.json();
 
     if (!walletAddress || !amount || !action || !tokenMint || !poolAddress || !swapsTokenAddress) {

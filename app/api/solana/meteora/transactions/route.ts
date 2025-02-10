@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server"
-import { Connection, PublicKey, ParsedTransactionWithMeta } from "@solana/web3.js"
+import { Connection, PublicKey, ParsedTransactionWithMeta, TokenBalance } from "@solana/web3.js"
 import { logger } from "@/lib/logger"
 import { deriveCustomizablePermissionlessConstantProductPoolAddress, createProgram } from "@mercurial-finance/dynamic-amm-sdk/dist/cjs/src/amm/utils"
 import { createClient } from "@supabase/supabase-js"
+import AmmImpl from "@mercurial-finance/dynamic-amm-sdk"
 
 if (!process.env.RPC_URL) {
   throw new Error("Missing RPC_URL environment variable")
@@ -56,70 +57,203 @@ function getBalanceChange(pre: Map<string, any>, post: Map<string, any>, mint: s
   return postAmount - preAmount
 }
 
-// Helper function to determine swap direction and amounts
-function parseSwapTransaction(tx: ParsedTransactionWithMeta, tokenMint: PublicKey, swarmsMint: PublicKey) {
-  if (!tx.meta?.postTokenBalances || !tx.meta?.preTokenBalances) {
-    logger.info("Missing token balances in transaction")
+// Helper function to parse swap transaction
+export function parseSwapTransaction(
+  tx: ParsedTransactionWithMeta, 
+  tokenMint: PublicKey, 
+  swarmsMint: PublicKey,
+  vaultAddresses: { tokenVault: string, swarmsVault: string }
+) {
+  if (!tx.meta?.postTokenBalances || !tx.meta?.preTokenBalances || !tx.meta?.logMessages) {
     return null
   }
 
-  // Log full transaction data for debugging
-  logger.info("Full transaction balances", {
-    pre: JSON.stringify(tx.meta.preTokenBalances),
-    post: JSON.stringify(tx.meta.postTokenBalances)
-  })
+  // First verify this is a Meteora swap instruction
+  const hasMeteoraProgram = tx.meta.logMessages.some(log => 
+    log.includes('Program Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB invoke')
+  )
+  const hasSwapInstruction = tx.meta.logMessages.some(log => 
+    log.includes('Program log: Instruction: Swap')
+  )
 
-  // Check if this is a pool creation transaction by looking for multiple token accounts
-  const tokenAccounts = tx.meta.postTokenBalances.filter(b => b.mint === tokenMint.toString())
-  const swarmsAccounts = tx.meta.postTokenBalances.filter(b => b.mint === swarmsMint.toString())
+  if (!hasMeteoraProgram || !hasSwapInstruction) {
+    return null
+  }
+
+  // Find token vault balance changes
+  const tokenVaultPre = tx.meta.preTokenBalances.find(b => 
+    b.owner === vaultAddresses.tokenVault && 
+    b.mint === tokenMint.toString()
+  )?.uiTokenAmount?.uiAmount ?? null
+
+  const tokenVaultPost = tx.meta.postTokenBalances.find(b => 
+    b.owner === vaultAddresses.tokenVault && 
+    b.mint === tokenMint.toString()
+  )?.uiTokenAmount?.uiAmount ?? null
+
+  // Find SWARMS vault balance changes
+  const swarmsVaultPre = tx.meta.preTokenBalances.find(b => 
+    b.owner === vaultAddresses.swarmsVault && 
+    b.mint === swarmsMint.toString()
+  )?.uiTokenAmount?.uiAmount ?? null
+
+  const swarmsVaultPost = tx.meta.postTokenBalances.find(b => 
+    b.owner === vaultAddresses.swarmsVault && 
+    b.mint === swarmsMint.toString()
+  )?.uiTokenAmount?.uiAmount ?? null
+
+  if (tokenVaultPre === null || tokenVaultPost === null || 
+      swarmsVaultPre === null || swarmsVaultPost === null) {
+    return null
+  }
+
+  // Calculate changes
+  const tokenChange = tokenVaultPost - tokenVaultPre
+  const swarmsChange = swarmsVaultPost - swarmsVaultPre
   
-  if (tokenAccounts.length > 2 || swarmsAccounts.length > 2) {
-    logger.info("Pool creation transaction detected - skipping", {
-      tokenAccounts: tokenAccounts.length,
-      swarmsAccounts: swarmsAccounts.length
-    })
-    return null
-  }
-
-  // Find the token balances for both tokens
-  const preTokenBalance = tx.meta.preTokenBalances.find(b => b.mint === tokenMint.toString())
-  const postTokenBalance = tx.meta.postTokenBalances.find(b => b.mint === tokenMint.toString())
-  const preSwarmsBalance = tx.meta.preTokenBalances.find(b => b.mint === swarmsMint.toString())
-  const postSwarmsBalance = tx.meta.postTokenBalances.find(b => b.mint === swarmsMint.toString())
-
-  if (!preTokenBalance?.uiTokenAmount || !postTokenBalance?.uiTokenAmount || 
-      !preSwarmsBalance?.uiTokenAmount || !postSwarmsBalance?.uiTokenAmount) {
-    logger.info("Missing token balance information")
-    return null
-  }
-
-  // Calculate changes using uiAmount values
-  const tokenChange = (postTokenBalance.uiTokenAmount.uiAmount || 0) - (preTokenBalance.uiTokenAmount.uiAmount || 0)
-  const swarmsChange = (postSwarmsBalance.uiTokenAmount.uiAmount || 0) - (preSwarmsBalance.uiTokenAmount.uiAmount || 0)
-
-  // For a valid swap, one token should decrease while the other increases
-  const isValidSwap = (tokenChange < 0 && swarmsChange > 0) || (tokenChange > 0 && swarmsChange < 0)
-  if (!isValidSwap) {
-    logger.info("Not a valid swap transaction", { tokenChange, swarmsChange })
-    return null
-  }
-
-  // If token balance decreased and SWARMS increased, it's a sell
-  // If token balance increased and SWARMS decreased, it's a buy
-  const isSell = tokenChange < 0 && swarmsChange > 0
-
+  // A buy is when tokens leave the token vault (negative change)
+  const isBuy = tokenChange < 0
   const tokenAmount = Math.abs(tokenChange)
   const swarmsAmount = Math.abs(swarmsChange)
 
-  const swapDetails = {
-    side: isSell ? 'sell' : 'buy',
-    tokenAmount,
-    swarmsAmount,
-    price: swarmsAmount / tokenAmount
-  }
+  // Find the user's account (non-vault account)
+  const userAccount = tx.meta.preTokenBalances.find(b => 
+    b.mint === tokenMint.toString() && 
+    b.owner !== vaultAddresses.tokenVault
+  )
 
-  logger.info("Parsed swap details", swapDetails)
-  return swapDetails
+  // The price is already provided by Meteora in the correct format
+  const price = swarmsAmount / tokenAmount
+
+  return {
+    signature: tx.transaction.signatures[0],
+    side: isBuy ? 'buy' : 'sell',
+    size: tokenAmount,
+    price: swarmsAmount / tokenAmount,
+    vaults: {
+      tokenVault: vaultAddresses.tokenVault,
+      swarmsVault: vaultAddresses.swarmsVault
+    },
+    user: userAccount?.owner || 'unknown'
+  }
+}
+
+// Helper to find the user from balance changes
+function findUserFromBalances(
+  isBuy: boolean,
+  tokenBalances: { pre: any[], post: any[] },
+  swarmsBalances: { pre: any[], post: any[] },
+  vaultAddresses: { tokenVault: string, swarmsVault: string }
+): string {
+  const relevantBalances = isBuy ? tokenBalances : swarmsBalances
+  const nonVaultBalances = relevantBalances.post.filter(b => 
+    b.owner !== vaultAddresses.tokenVault && 
+    b.owner !== vaultAddresses.swarmsVault
+  )
+  return nonVaultBalances[0]?.owner || 'unknown'
+}
+
+async function getLatestTransactions(
+  connection: Connection,
+  poolKey: PublicKey,
+  tokenMint: PublicKey,
+  swarmsMint: PublicKey,
+  lastKnownSignature?: string
+) {
+  try {
+    // Get pool info to find vault addresses
+    const amm = await AmmImpl.create(connection, poolKey)
+    await amm.updateState()
+    const pool = amm.poolState
+    
+    if (!pool) {
+      logger.error("Failed to fetch pool info", new Error("Pool state not found"))
+      return []
+    }
+
+    const vaultAddresses = {
+      tokenVault: pool.aVault.toString(),
+      swarmsVault: pool.bVault.toString()
+    }
+
+    logger.info("Found pool vaults", {
+      poolAddress: poolKey.toString(),
+      ...vaultAddresses
+    })
+
+    // Fetch signatures in smaller batches to avoid rate limits
+    const signatures = await connection.getSignaturesForAddress(
+      poolKey,
+      { 
+        limit: 10, // Reduced from 20 to avoid rate limits
+        before: lastKnownSignature
+      },
+      'confirmed'
+    )
+
+    // Process transactions with delay between each to avoid rate limits
+    const transactions = []
+    for (const sig of signatures) {
+      try {
+        const tx = await connection.getParsedTransaction(sig.signature, {
+          maxSupportedTransactionVersion: 0,
+          commitment: 'confirmed'
+        })
+
+        if (!tx) {
+          logger.info("Transaction not found", { signature: sig.signature })
+          continue
+        }
+
+        // Log raw transaction data for debugging
+        logger.info("Raw transaction data", {
+          data: {
+            signature: sig.signature,
+            version: tx.version,
+            signatures: tx.transaction.signatures,
+            message: tx.transaction.message,
+            accountKeys: tx.transaction.message.accountKeys,
+            instructions: tx.transaction.message.instructions,
+            recentBlockhash: tx.transaction.message.recentBlockhash,
+            meta: tx.meta
+          }
+        })
+
+        const swapDetails = parseSwapTransaction(tx, tokenMint, swarmsMint, vaultAddresses)
+        if (!swapDetails) {
+          logger.info("Could not parse swap details", { signature: sig.signature })
+          continue
+        }
+
+        // Log the transaction we're about to push
+        logger.info("Adding transaction to response", {
+          signature: sig.signature,
+          side: swapDetails.side,
+          size: swapDetails.size,
+          price: swapDetails.price,
+          timestamp: sig.blockTime ? sig.blockTime * 1000 : Date.now()
+        })
+
+        transactions.push({
+          signature: sig.signature,
+          price: swapDetails.price,
+          size: swapDetails.size,
+          side: swapDetails.side,
+          timestamp: sig.blockTime ? sig.blockTime * 1000 : Date.now()
+        })
+
+        // Add small delay between requests to avoid rate limits
+        await new Promise(resolve => setTimeout(resolve, 100))
+      } catch (error) {
+        logger.error("Error processing transaction", error as Error, { signature: sig.signature })
+      }
+    }
+
+    return transactions
+  } catch (error) {
+    logger.error("Error fetching Meteora transactions", error as Error)
+    return []
+  }
 }
 
 export async function GET(req: Request) {
@@ -145,15 +279,23 @@ export async function GET(req: Request) {
       .eq('mint_address', mintAddress)
       .single()
 
-    if (!cacheError && cachedData) {
+    let existingTransactions: any[] = []
+    let lastKnownSignature: string | undefined
+
+    if (!cacheError && cachedData?.data?.length > 0) {
+      existingTransactions = cachedData.data
+      lastKnownSignature = existingTransactions[0]?.signature // Most recent transaction
+      
       const cacheAge = Date.now() - new Date(cachedData.updated_at).getTime()
       if (cacheAge < 60 * 1000) { // 1 minute cache
-        logger.info("Returning cached Meteora transactions", { mintAddress })
-        return NextResponse.json({ transactions: cachedData.data }, { headers })
+        logger.info("Returning cached Meteora transactions", { 
+          mintAddress,
+          transactionCount: existingTransactions.length
+        })
+        return NextResponse.json({ transactions: existingTransactions }, { headers })
       }
     }
 
-    // Validate mint addresses
     try {
       const tokenMint = new PublicKey(mintAddress)
       const swarmsMint = new PublicKey(swarmsAddress)
@@ -165,63 +307,66 @@ export async function GET(req: Request) {
         createProgram(connection).ammProgram.programId,
       )
 
-      // Fetch recent transactions for the pool
-      const signatures = await connection.getSignaturesForAddress(
+      // Fetch only new transactions
+      const newTransactions = await getLatestTransactions(
+        connection,
         poolKey,
-        { limit: 5 }, // Reduced from 20 to 5
-        'confirmed'
+        tokenMint,
+        swarmsMint,
+        lastKnownSignature
       )
 
-      // Get transaction details with a single RPC call
-      const transactions = await Promise.all(
-        signatures.map(async (sig) => {
-          logger.info("Processing transaction", { signature: sig.signature })
-          
-          const tx = await connection.getParsedTransaction(sig.signature, {
-            maxSupportedTransactionVersion: 0
-          })
-          
-          if (!tx) {
-            logger.info("Transaction not found", { signature: sig.signature })
-            return null
-          }
+      // Merge new transactions with existing ones
+      const allTransactions = [...newTransactions, ...existingTransactions]
+        .sort((a, b) => b.timestamp - a.timestamp) // Sort by timestamp descending
+        .slice(0, 100) // Keep only the 100 most recent transactions
 
-          // Parse swap details from transaction
-          const swapDetails = parseSwapTransaction(tx, tokenMint, swarmsMint)
-          if (!swapDetails) {
-            logger.info("Could not parse swap details", { signature: sig.signature })
-            return null
-          }
+      // Log the transactions we're about to cache
+      logger.info("Caching transactions", {
+        mintAddress,
+        newTransactions: newTransactions.map(t => ({
+          signature: t.signature,
+          side: t.side,
+          size: t.size,
+          timestamp: t.timestamp
+        })),
+        existingTransactions: existingTransactions.slice(0, 5).map(t => ({
+          signature: t.signature,
+          side: t.side,
+          size: t.size,
+          timestamp: t.timestamp
+        })) // Only log first 5 for brevity
+      })
 
-          const transaction = {
-            signature: sig.signature,
-            price: swapDetails.price,
-            size: swapDetails.tokenAmount, // Already in UI format, no need to divide
-            side: swapDetails.side,
-            timestamp: sig.blockTime ? sig.blockTime * 1000 : Date.now()
-          }
-
-          logger.info("Processed transaction", transaction)
-          return transaction
-        })
-      )
-
-      // Filter out null transactions
-      const validTransactions = transactions.filter(tx => tx !== null)
-
-      // Update cache
+      // Update cache with merged transactions
       await supabase
         .from('meteora_transactions')
         .upsert({
           mint_address: mintAddress,
-          data: validTransactions,
+          data: allTransactions,
           updated_at: new Date().toISOString()
         })
 
-      return NextResponse.json({ transactions: validTransactions }, { headers })
+      logger.info("Updated Meteora transactions cache", {
+        mintAddress,
+        newTransactions: newTransactions.length,
+        totalTransactions: allTransactions.length
+      })
+
+      return NextResponse.json({ transactions: allTransactions }, { headers })
 
     } catch (error) {
       logger.error("Error fetching Meteora transactions", error as Error)
+      
+      // If we have cached data, return it even if it's stale
+      if (existingTransactions.length > 0) {
+        logger.info("Returning stale cached data due to error", {
+          mintAddress,
+          transactionCount: existingTransactions.length
+        })
+        return NextResponse.json({ transactions: existingTransactions }, { headers })
+      }
+
       return NextResponse.json(
         { error: "Failed to fetch transactions", details: (error as Error).message },
         { status: 500 }
