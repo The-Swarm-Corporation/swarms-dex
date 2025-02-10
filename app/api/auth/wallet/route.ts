@@ -246,12 +246,25 @@ export async function POST(request: NextRequest) {
         })
 
         if (signUpError) {
-          console.error('Sign up error:', signUpError)
-          throw signUpError
-        }
-
-        if (!signUpData?.user) {
-          throw new Error('No user created during signup')
+          // If user already exists, try to sign in again
+          if (signUpError.message.includes('already been registered')) {
+            const { data: existingUserSignIn, error: existingUserError } = await supabase.auth.signInWithPassword({
+              email: `${publicKey}@phantom.wallet`,
+              password: generateWalletPassword(publicKey)
+            })
+            
+            if (existingUserError) {
+              console.error('Error signing in existing user:', existingUserError)
+              throw existingUserError
+            }
+            
+            signInData = existingUserSignIn
+          } else {
+            console.error('Sign up error:', signUpError)
+            throw signUpError
+          }
+        } else {
+          signInData = signUpData
         }
 
         // Create web3users record if it doesn't exist
