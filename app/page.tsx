@@ -4,7 +4,6 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Input } from "@/components/ui/input"
 import { Bot, Users, ExternalLink, Search, Star, Flame, Loader2 } from "lucide-react"
 import Link from "next/link"
 import { listTokens, getTrendingTokens } from "@/lib/api"
@@ -13,12 +12,39 @@ import { logger } from "@/lib/logger"
 import { useDebounce } from "@/hooks/use-debounce"
 import { SearchBar } from "@/components/search-bar"
 
-function TokenCard({ token }: { token: Web3Agent & { price_change_24h?: number } }) {
+function TokenCard({ token }: { token: Web3Agent & { 
+  price_change_24h?: number
+  market?: {
+    stats?: {
+      price: number
+      volume24h: number
+      apy: number
+    }
+  }
+} }) {
   const priceChangeColor = token.price_change_24h
     ? token.price_change_24h > 0
       ? "text-green-500"
       : "text-red-500"
     : "text-gray-400"
+
+  // Format price with proper decimals
+  const formatPrice = (price: number | null | undefined) => {
+    if (!price) return "0.0000"
+    return price.toLocaleString(undefined, {
+      minimumFractionDigits: 13,
+      maximumFractionDigits: 13
+    })
+  }
+
+  // Format volume and market cap with comma separators
+  const formatValue = (value: number | null | undefined) => {
+    if (!value) return "0"
+    return value.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    })
+  }
 
   return (
     <Card className="group bg-black/50 border border-red-500/20 hover:border-red-500/40 transition-all hover:scale-[1.02] hover:shadow-lg hover:shadow-red-500/10">
@@ -48,7 +74,11 @@ function TokenCard({ token }: { token: Web3Agent & { price_change_24h?: number }
               )}
             </div>
           </div>
-          <Bot className="h-6 w-6 text-red-500 group-hover:scale-110 transition-transform" />
+          {token.is_swarm ? (
+            <Users className="h-6 w-6 text-red-500 group-hover:scale-110 transition-transform" />
+          ) : (
+            <Bot className="h-6 w-6 text-red-500 group-hover:scale-110 transition-transform" />
+          )}
         </div>
       </CardHeader>
       <CardContent>
@@ -56,15 +86,15 @@ function TokenCard({ token }: { token: Web3Agent & { price_change_24h?: number }
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
             <div className="text-sm text-gray-400">Price</div>
-            <div className="font-mono text-lg">${token.current_price?.toFixed(4) || "0.0000"}</div>
+            <div className="font-mono text-lg">${formatPrice(token.market?.stats?.price || token.current_price)}</div>
           </div>
           <div className="space-y-2">
             <div className="text-sm text-gray-400">Volume 24h</div>
-            <div className="font-mono text-lg">${token.volume_24h?.toLocaleString() || "0"}</div>
+            <div className="font-mono text-lg">${formatValue(token.market?.stats?.volume24h || token.volume_24h)}</div>
           </div>
           <div className="space-y-2">
             <div className="text-sm text-gray-400">Market Cap</div>
-            <div className="font-mono text-lg">${token.market_cap?.toLocaleString() || "0"}</div>
+            <div className="font-mono text-lg">${formatValue(token.market_cap)}</div>
           </div>
         </div>
       </CardContent>
@@ -118,9 +148,32 @@ export default function Home() {
         const fetchedTokens = await listTokens({
           limit: 50,
           search: debouncedSearch,
-          orderBy: "created_at"
+          orderBy: "created_at",
+          include_market_data: true
         })
-        setTokens(fetchedTokens)
+
+        // Fetch market data for each token
+        const tokensWithMarket = await Promise.all(
+          fetchedTokens.map(async (token) => {
+            try {
+              const response = await fetch(`/api/agent/${token.mint_address}`)
+              if (response.ok) {
+                const data = await response.json()
+                return {
+                  ...token,
+                  market: data.market,
+                  price_change_24h: data.price_change_24h
+                }
+              }
+              return token
+            } catch (error) {
+              console.error(`Failed to fetch market data for ${token.mint_address}:`, error)
+              return token
+            }
+          })
+        )
+        
+        setTokens(tokensWithMarket)
         setError(null)
       } catch (error) {
         logger.error("Failed to fetch tokens", error as Error)

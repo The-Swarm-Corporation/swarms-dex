@@ -9,6 +9,7 @@ interface ListTokensParams {
   search?: string
   orderBy?: string
   isSwarm?: boolean
+  include_market_data?: boolean
 }
 
 // User API
@@ -54,6 +55,7 @@ export async function listTokens(params: ListTokensParams = {}): Promise<Web3Age
     if (params.search) searchParams.append("search", params.search)
     if (params.orderBy) searchParams.append("orderBy", params.orderBy)
     if (params.isSwarm !== undefined) searchParams.append("isSwarm", params.isSwarm.toString())
+    if (params.include_market_data !== undefined) searchParams.append("include_market_data", params.include_market_data.toString())
 
     const response = await fetch(`${API_BASE_URL}/api/tokens/list?${searchParams.toString()}`)
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
