@@ -33,6 +33,13 @@ export function TradingViewChart({ data, symbol }: TradingViewChartProps) {
         fontSize: 12,
         fontFamily: 'Inter, sans-serif',
       },
+      localization: {
+        locale: 'en-US',
+        priceFormatter: (price: number) => {
+          // Show price in SWARMS with fixed precision
+          return `${price.toFixed(10)}`;
+        }
+      },
       grid: {
         vertLines: { color: 'rgba(220, 38, 38, 0.1)' },
         horzLines: { color: 'rgba(220, 38, 38, 0.1)' },
@@ -62,10 +69,15 @@ export function TradingViewChart({ data, symbol }: TradingViewChartProps) {
         borderColor: 'rgba(220, 38, 38, 0.2)',
         scaleMargins: {
           top: 0.1,
-          bottom: 0.3, // Give more space at the bottom for volume
+          bottom: 0.3,
         },
-        mode: 2, // Logarithmic scale
+        mode: 0,
         autoScale: true,
+        alignLabels: true,
+        borderVisible: true,
+        visible: true,
+        entireTextOnly: false,
+        ticksVisible: true,
       },
       width: chartContainerRef.current.clientWidth,
       height: 400,
@@ -91,9 +103,16 @@ export function TradingViewChart({ data, symbol }: TradingViewChartProps) {
       wickDownColor: '#ef4444',
       priceFormat: {
         type: 'price',
-        precision: 8,
-        minMove: 0.00000001,
+        precision: 10,
+        minMove: 0.0000000001,
       },
+      priceScaleId: 'right',
+      autoscaleInfoProvider: () => ({
+        priceRange: {
+          minValue: Math.min(...formattedData.map(d => d.low)),
+          maxValue: Math.max(...formattedData.map(d => d.high))
+        }
+      })
     })
 
     // Volume series with custom price format

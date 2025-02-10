@@ -175,7 +175,7 @@ function transformTransactionsToOHLCV(transactions: Array<{
     }
     buckets[bucketTime].push({
       ...tx,
-      price: tx.price * swarmsPrice // Convert SWARMS price to USD
+      price: tx.price // Keep price in SWARMS, don't multiply by swarmsPrice
     })
   })
 
@@ -188,10 +188,10 @@ function transformTransactionsToOHLCV(transactions: Array<{
         const lastKnownPrice = sortedTx.find(tx => tx.timestamp < parseInt(time))?.price || 0
         return {
           time: new Date(parseInt(time)),
-          open: lastKnownPrice * swarmsPrice,
-          high: lastKnownPrice * swarmsPrice,
-          low: lastKnownPrice * swarmsPrice,
-          close: lastKnownPrice * swarmsPrice,
+          open: lastKnownPrice,
+          high: lastKnownPrice,
+          low: lastKnownPrice,
+          close: lastKnownPrice,
           volume: 0
         }
       }
@@ -211,17 +211,14 @@ function transformTransactionsToOHLCV(transactions: Array<{
 
   // Calculate 24h stats
   const now = Date.now()
-  const last24hTx = sortedTx.map(tx => ({
-    ...tx,
-    price: tx.price * swarmsPrice // Convert SWARMS price to USD
-  })).filter(tx => tx.timestamp > now - 24 * 3600000)
+  const last24hTx = sortedTx.filter(tx => tx.timestamp > now - 24 * 3600000)
   const prices24h = last24hTx.map(tx => tx.price)
   const volume24h = last24hTx.reduce((sum, tx) => sum + (tx.price * tx.size), 0)
 
   return {
-    price: (sortedTx[sortedTx.length - 1]?.price || 0) * swarmsPrice,
+    price: sortedTx[sortedTx.length - 1]?.price || 0,
     volume24h,
-    marketCap: 0, // We don't have this information
+    marketCap: 0,
     highPrice24h: prices24h.length > 0 ? Math.max(...prices24h) : 0,
     lowPrice24h: prices24h.length > 0 ? Math.min(...prices24h) : 0,
     priceHistory
