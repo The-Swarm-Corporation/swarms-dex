@@ -63,7 +63,14 @@ export function parseSwapTransaction(
   tokenMint: PublicKey, 
   swarmsMint: PublicKey,
   vaultAddresses: { tokenVault: string, swarmsVault: string }
-) {
+): { 
+  signature: string; 
+  side: 'buy' | 'sell'; 
+  size: number; 
+  price: number;
+  vaults: { tokenVault: string; swarmsVault: string };
+  user: string;
+} | null {
   if (!tx.meta?.postTokenBalances || !tx.meta?.preTokenBalances || !tx.meta?.logMessages) {
     return null
   }
@@ -127,7 +134,7 @@ export function parseSwapTransaction(
 
   return {
     signature: tx.transaction.signatures[0],
-    side: isBuy ? 'buy' : 'sell',
+    side: isBuy ? 'buy' : 'sell' as const,
     size: tokenAmount,
     price: swarmsAmount / tokenAmount,
     vaults: {
@@ -153,6 +160,20 @@ function findUserFromBalances(
   return nonVaultBalances[0]?.owner || 'unknown'
 }
 
+interface Transaction {
+  signature: string
+  price: number | null
+  size: number | null
+  side: 'buy' | 'sell' | null
+  timestamp: number
+  isSwap: boolean
+}
+
+interface CachedTransactionData {
+  data: Transaction[]
+  updated_at: string
+}
+
 async function getLatestTransactions(
   connection: Connection,
   poolKey: PublicKey,
@@ -160,6 +181,7 @@ async function getLatestTransactions(
   swarmsMint: PublicKey,
   lastKnownSignature?: string
 ) {
+  let existingTransactions: Transaction[] = []
   try {
     // Get pool info to find vault addresses
     const amm = await AmmImpl.create(connection, poolKey)
@@ -168,7 +190,7 @@ async function getLatestTransactions(
     
     if (!pool) {
       logger.error("Failed to fetch pool info", new Error("Pool state not found"))
-      return []
+      return existingTransactions
     }
 
     const vaultAddresses = {
@@ -176,23 +198,68 @@ async function getLatestTransactions(
       swarmsVault: pool.bVault.toString()
     }
 
-    logger.info("Found pool vaults", {
-      poolAddress: poolKey.toString(),
-      ...vaultAddresses
-    })
+    // First try to get cached transactions from database
+    const { data: cachedData, error: cacheError } = await supabase
+      .from('meteora_transactions')
+      .select('*')
+      .eq('mint_address', tokenMint.toString())
+      .single()
 
-    // Fetch signatures in smaller batches to avoid rate limits
+    let mostRecentSignature: string | undefined = undefined
+
+    if (!cacheError && cachedData) {
+      const typedData = cachedData as unknown as CachedTransactionData
+      existingTransactions = typedData.data
+      mostRecentSignature = existingTransactions[0]?.signature
+      
+      // If cache is fresh (less than 1 minute old) or if the most recent signature matches our last known signature
+      const cacheAge = Date.now() - new Date(typedData.updated_at).getTime()
+      if (cacheAge < 60 * 1000 || (lastKnownSignature && existingTransactions[0]?.signature === lastKnownSignature)) {
+        logger.info("Using cached transactions", {
+          mintAddress: tokenMint.toString(),
+          transactionCount: existingTransactions.length,
+          cacheAge: `${Math.round(cacheAge / 1000)}s`,
+          hasLastKnownSignature: !!lastKnownSignature
+        })
+        return existingTransactions.filter(tx => tx.isSwap)
+      }
+    }
+
+    // Fetch only new signatures since our last known signature
     const signatures = await connection.getSignaturesForAddress(
       poolKey,
       { 
-        limit: 10, // Reduced from 20 to avoid rate limits
-        before: lastKnownSignature
+        limit: 10,
+        before: mostRecentSignature // Only get transactions newer than our cache
       },
       'confirmed'
     )
 
-    // Process transactions with delay between each to avoid rate limits
-    const transactions = []
+    if (signatures.length === 0 || (existingTransactions.length > 0 && signatures.length === existingTransactions.length)) {
+      logger.info("No new transactions to process", {
+        mintAddress: tokenMint.toString(),
+        poolAddress: poolKey.toString(),
+        signatureCount: signatures.length,
+        existingCount: existingTransactions.length
+      })
+      // Update cache timestamp even if no new transactions
+      await supabase
+        .from('meteora_transactions')
+        .upsert({
+          mint_address: tokenMint.toString(),
+          data: existingTransactions,
+          updated_at: new Date().toISOString()
+        })
+      return existingTransactions
+    }
+
+    logger.info("Found new signatures", {
+      count: signatures.length,
+      poolAddress: poolKey.toString()
+    })
+
+    // Process new transactions with delay between each to avoid rate limits
+    const newTransactions: Transaction[] = []
     for (const sig of signatures) {
       try {
         const tx = await connection.getParsedTransaction(sig.signature, {
@@ -205,61 +272,78 @@ async function getLatestTransactions(
           continue
         }
 
-        // Log raw transaction data for debugging
-        logger.info("Raw transaction data", {
-          data: {
-            signature: sig.signature,
-            version: tx.version,
-            signatures: tx.transaction.signatures,
-            message: tx.transaction.message,
-            accountKeys: tx.transaction.message.accountKeys,
-            instructions: tx.transaction.message.instructions,
-            recentBlockhash: tx.transaction.message.recentBlockhash,
-            meta: tx.meta
-          }
+        const swapDetails = parseSwapTransaction(tx, tokenMint, swarmsMint, vaultAddresses)
+        
+        // Save all transactions, but mark non-swaps with null values
+        newTransactions.push({
+          signature: sig.signature,
+          price: swapDetails?.price ?? null,
+          size: swapDetails?.size ?? null,
+          side: swapDetails?.side ?? null,
+          timestamp: sig.blockTime ? sig.blockTime * 1000 : Date.now(),
+          isSwap: !!swapDetails
         })
 
-        const swapDetails = parseSwapTransaction(tx, tokenMint, swarmsMint, vaultAddresses)
         if (!swapDetails) {
-          logger.info("Could not parse swap details", { signature: sig.signature })
+          logger.info("Saving non-swap transaction", { signature: sig.signature })
           continue
         }
-
-        // Log the transaction we're about to push
-        logger.info("Adding transaction to response", {
-          signature: sig.signature,
-          side: swapDetails.side,
-          size: swapDetails.size,
-          price: swapDetails.price,
-          timestamp: sig.blockTime ? sig.blockTime * 1000 : Date.now()
-        })
-
-        transactions.push({
-          signature: sig.signature,
-          price: swapDetails.price,
-          size: swapDetails.size,
-          side: swapDetails.side,
-          timestamp: sig.blockTime ? sig.blockTime * 1000 : Date.now()
-        })
-
-        // Add small delay between requests to avoid rate limits
-        await new Promise(resolve => setTimeout(resolve, 100))
       } catch (error) {
         logger.error("Error processing transaction", error as Error, { signature: sig.signature })
+        // Save failed transactions too
+        newTransactions.push({
+          signature: sig.signature,
+          price: null,
+          size: null,
+          side: null,
+          timestamp: sig.blockTime ? sig.blockTime * 1000 : Date.now(),
+          isSwap: false
+        })
       }
     }
 
-    return transactions
+    // Merge new transactions with existing ones and sort
+    const allTransactions = [...newTransactions, ...existingTransactions]
+      .sort((a: Transaction, b: Transaction) => b.timestamp - a.timestamp)
+      .slice(0, 100) // Keep only the 100 most recent transactions
+
+    // Filter out non-swaps when returning to user
+    const swapTransactions = allTransactions.filter(tx => tx.isSwap)
+
+    // Update cache with merged transactions
+    await supabase
+      .from('meteora_transactions')
+      .upsert({
+        mint_address: tokenMint.toString(),
+        data: allTransactions,
+        updated_at: new Date().toISOString()
+      })
+
+    logger.info("Updated transaction cache", {
+      mintAddress: tokenMint.toString(),
+      newTransactions: newTransactions.length,
+      totalTransactions: allTransactions.length
+    })
+
+    return swapTransactions
   } catch (error) {
     logger.error("Error fetching Meteora transactions", error as Error)
+    // If we have existing transactions, return them even if update failed
+    if (existingTransactions.length > 0) {
+      return existingTransactions
+    }
     return []
   }
 }
 
 export async function GET(req: Request) {
+  let existingTransactions: Transaction[] = []
+  let mintAddress: string | null = null
+  const headers = new Headers()
+
   try {
     const { searchParams } = new URL(req.url)
-    const mintAddress = searchParams.get('mintAddress')
+    mintAddress = searchParams.get('mintAddress')
     const swarmsAddress = process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS
 
     if (!mintAddress || !swarmsAddress) {
@@ -267,10 +351,11 @@ export async function GET(req: Request) {
     }
 
     // Add cache headers to prevent duplicate requests
-    const headers = new Headers()
     headers.set('Cache-Control', 'public, s-maxage=60') // Cache for 60 seconds
     headers.set('CDN-Cache-Control', 'public, s-maxage=60')
     headers.set('Vercel-CDN-Cache-Control', 'public, s-maxage=60')
+
+    let lastKnownSignature: string | undefined
 
     // Try to get cached data first
     const { data: cachedData, error: cacheError } = await supabase
@@ -279,14 +364,12 @@ export async function GET(req: Request) {
       .eq('mint_address', mintAddress)
       .single()
 
-    let existingTransactions: any[] = []
-    let lastKnownSignature: string | undefined
-
     if (!cacheError && cachedData?.data?.length > 0) {
-      existingTransactions = cachedData.data
+      const typedData = cachedData as unknown as CachedTransactionData
+      existingTransactions = typedData.data
       lastKnownSignature = existingTransactions[0]?.signature // Most recent transaction
       
-      const cacheAge = Date.now() - new Date(cachedData.updated_at).getTime()
+      const cacheAge = Date.now() - new Date(typedData.updated_at).getTime()
       if (cacheAge < 60 * 1000) { // 1 minute cache
         logger.info("Returning cached Meteora transactions", { 
           mintAddress,
@@ -296,84 +379,53 @@ export async function GET(req: Request) {
       }
     }
 
-    try {
-      const tokenMint = new PublicKey(mintAddress)
-      const swarmsMint = new PublicKey(swarmsAddress)
+    const tokenMint = new PublicKey(mintAddress)
+    const swarmsMint = new PublicKey(swarmsAddress)
 
-      // Get pool address
-      const poolKey = deriveCustomizablePermissionlessConstantProductPoolAddress(
-        tokenMint,
-        swarmsMint,
-        createProgram(connection).ammProgram.programId,
-      )
+    // Get pool address
+    const poolKey = deriveCustomizablePermissionlessConstantProductPoolAddress(
+      tokenMint,
+      swarmsMint,
+      createProgram(connection).ammProgram.programId,
+    )
 
-      // Fetch only new transactions
-      const newTransactions = await getLatestTransactions(
-        connection,
-        poolKey,
-        tokenMint,
-        swarmsMint,
-        lastKnownSignature
-      )
+    // Fetch only new transactions
+    const newTransactions = await getLatestTransactions(
+      connection,
+      poolKey,
+      tokenMint,
+      swarmsMint,
+      lastKnownSignature
+    )
 
-      // Merge new transactions with existing ones
-      const allTransactions = [...newTransactions, ...existingTransactions]
-        .sort((a, b) => b.timestamp - a.timestamp) // Sort by timestamp descending
-        .slice(0, 100) // Keep only the 100 most recent transactions
+    // Merge new transactions with existing ones
+    const allTransactions = [...newTransactions, ...existingTransactions]
+      .sort((a: Transaction, b: Transaction) => b.timestamp - a.timestamp) // Sort by timestamp descending
+      .slice(0, 100) // Keep only the 100 most recent transactions
 
-      // Log the transactions we're about to cache
-      logger.info("Caching transactions", {
-        mintAddress,
-        newTransactions: newTransactions.map(t => ({
-          signature: t.signature,
-          side: t.side,
-          size: t.size,
-          timestamp: t.timestamp
-        })),
-        existingTransactions: existingTransactions.slice(0, 5).map(t => ({
-          signature: t.signature,
-          side: t.side,
-          size: t.size,
-          timestamp: t.timestamp
-        })) // Only log first 5 for brevity
+    // Update cache with merged transactions
+    await supabase
+      .from('meteora_transactions')
+      .upsert({
+        mint_address: mintAddress,
+        data: allTransactions,
+        updated_at: new Date().toISOString()
       })
 
-      // Update cache with merged transactions
-      await supabase
-        .from('meteora_transactions')
-        .upsert({
-          mint_address: mintAddress,
-          data: allTransactions,
-          updated_at: new Date().toISOString()
-        })
+    return NextResponse.json({ transactions: allTransactions }, { headers })
 
-      logger.info("Updated Meteora transactions cache", {
-        mintAddress,
-        newTransactions: newTransactions.length,
-        totalTransactions: allTransactions.length
-      })
-
-      return NextResponse.json({ transactions: allTransactions }, { headers })
-
-    } catch (error) {
-      logger.error("Error fetching Meteora transactions", error as Error)
-      
-      // If we have cached data, return it even if it's stale
-      if (existingTransactions.length > 0) {
-        logger.info("Returning stale cached data due to error", {
-          mintAddress,
-          transactionCount: existingTransactions.length
-        })
-        return NextResponse.json({ transactions: existingTransactions }, { headers })
-      }
-
-      return NextResponse.json(
-        { error: "Failed to fetch transactions", details: (error as Error).message },
-        { status: 500 }
-      )
-    }
   } catch (error) {
     logger.error("Error in transaction endpoint", error as Error)
+    
+    // If we have cached data, return it even if it's stale
+    if (existingTransactions?.length > 0 && mintAddress) {
+      logger.info("Returning stale cached data due to error", {
+        mintAddress,
+        transactionCount: existingTransactions.length
+      })
+      return NextResponse.json({ transactions: existingTransactions }, { headers })
+    }
+
     return NextResponse.json(
       { error: "Internal server error", details: (error as Error).message },
       { status: 500 }

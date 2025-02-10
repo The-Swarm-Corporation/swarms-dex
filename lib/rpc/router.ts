@@ -56,7 +56,7 @@ export class RpcRouter {
       })
       logger.warn('All RPC endpoints were down, resetting all endpoints')
       return this.endpoints[0]
-  }
+    }
 
     // Round-robin through available endpoints
     this.currentIndex = (this.currentIndex + 1) % availableEndpoints.length
@@ -72,7 +72,7 @@ export class RpcRouter {
       logger.warn('RPC endpoint marked as down', { 
         url: endpoint.url, 
         failures: endpoint.failureCount 
-    })
+      })
     }
   }
 
@@ -86,31 +86,31 @@ export class RpcRouter {
     maxRetries: number = 3,
     delayMs: number = 500
   ): Promise<T> {
-    let lastError: Error | null = null
-    
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      const endpoint = this.getNextEndpoint()
-      const connection = new Connection(endpoint.url, this.config)
+      let lastError: Error | null = null
       
-      try {
-        const result = await operation(connection)
-        return result
-      } catch (error) {
-        lastError = error as Error
-        this.markEndpointFailure(endpoint)
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        const endpoint = this.getNextEndpoint()
+        const connection = new Connection(endpoint.url, this.config)
         
-        if (attempt < maxRetries - 1) {
-          logger.warn('RPC request failed, retrying with different endpoint', {
-            url: endpoint.url,
-          attempt: attempt + 1,
-          error: lastError.message
-        })
-          await new Promise(resolve => setTimeout(resolve, delayMs))
+        try {
+          const result = await operation(connection)
+          return result
+        } catch (error) {
+          lastError = error as Error
+          this.markEndpointFailure(endpoint)
+          
+          if (attempt < maxRetries - 1) {
+            logger.warn('RPC request failed, retrying with different endpoint', {
+              url: endpoint.url,
+              attempt: attempt + 1,
+              error: lastError.message
+            })
+            await new Promise(resolve => setTimeout(resolve, delayMs))
+          }
         }
       }
-    }
-    
-    throw lastError || new Error('Operation failed after all retries')
+      
+      throw lastError || new Error('Operation failed after all retries')
   }
 }
 

@@ -152,28 +152,27 @@ export default function Home() {
           include_market_data: true
         })
 
-        // Fetch market data for each token
-        const tokensWithMarket = await Promise.all(
-          fetchedTokens.map(async (token) => {
-            try {
-              const response = await fetch(`/api/agent/${token.mint_address}`)
-              if (response.ok) {
-                const data = await response.json()
-                return {
-                  ...token,
-                  market: data.market,
-                  price_change_24h: data.price_change_24h
-                }
-              }
-              return token
-            } catch (error) {
-              console.error(`Failed to fetch market data for ${token.mint_address}:`, error)
-              return token
-            }
-          })
-        )
-        
-        setTokens(tokensWithMarket)
+        // Use batch endpoint to fetch market data
+        const mintAddresses = fetchedTokens.map(token => token.mint_address)
+        const marketDataResponse = await fetch('/api/agent/market-data-batch', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ mintAddresses })
+        })
+
+        if (marketDataResponse.ok) {
+          const marketData = await marketDataResponse.json()
+          const updatedTokens = fetchedTokens.map(token => ({
+            ...token,
+            market: marketData[token.mint_address]?.market || null,
+            price_change_24h: marketData[token.mint_address]?.price_change_24h || 0
+          }))
+          setTokens(updatedTokens)
+        } else {
+          setTokens(fetchedTokens)
+        }
         setError(null)
       } catch (error) {
         logger.error("Failed to fetch tokens", error as Error)

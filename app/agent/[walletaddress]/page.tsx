@@ -354,7 +354,17 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
               price: tokenDetails.price,
               priceChange24h: tokenDetails.priceChange24h,
               liquidityPool: tokenDetails.liquidityPool,
-              market: tokenDetails.market
+              market: tokenDetails.market ? {
+                stats: tokenDetails.market.stats,
+                transactions: [
+                  ...(prev.market?.transactions || []),
+                  ...(tokenDetails.market.transactions || [])
+                    .filter(tx => 
+                      !(prev.market?.transactions || [])
+                        .some(prevTx => prevTx.signature === tx.signature)
+                    )
+                ]
+              } : prev.market
             })
           }
         }
@@ -384,8 +394,13 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
     // Initial fetch
     fetchData(false)
 
-    // Set up polling every 30 seconds
-    const interval = setInterval(() => fetchData(true), 30000)
+    // Set up polling every 30 seconds for subtle updates
+    const interval = setInterval(() => {
+      // Only fetch if not trading to prevent UI interruptions
+      if (!isTrading) {
+        fetchData(true)
+      }
+    }, 30000)
 
     return () => {
       clearInterval(interval)
@@ -393,7 +408,20 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
         clearTimeout(fetchTimeoutRef.current)
       }
     }
-  }, [fetchData])
+  }, [fetchData, isTrading])
+
+  // Add a useEffect to handle smooth price updates
+  useEffect(() => {
+    if (token?.price && !isTrading) {
+      const element = document.querySelector('.token-price')
+      if (element) {
+        element.classList.add('price-update')
+        setTimeout(() => {
+          element.classList.remove('price-update')
+        }, 1000)
+      }
+    }
+  }, [token?.price, isTrading])
 
   if (loading || !token) {
     return (
@@ -455,7 +483,7 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
                     </Badge>
                   </div>
                 </div>
-                <div className="text-2xl font-bold font-mono">
+                <div className="text-2xl font-bold font-mono token-price transition-all duration-300">
                   ${token.price.toLocaleString(undefined, { minimumFractionDigits: 10, maximumFractionDigits: 10 })}
                 </div>
               </div>

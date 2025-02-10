@@ -224,21 +224,26 @@ export function TokenTradingPanel({
 
       const { signature } = await submitResponse.json();
 
-      toast.success(
-        <div>
-          Bonding curve swap successful!{" "}
-          <a
-            href={`https://solscan.io/tx/${signature}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-          >
-            View on Solscan
-          </a>
-        </div>
-      );
+      // Handle success without triggering refresh
+      requestAnimationFrame(() => {
+        toast.success(
+          <div>
+            Bonding curve swap successful!{" "}
+            <a
+              href={`https://solscan.io/tx/${signature}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              View on Solscan
+            </a>
+          </div>,
+          { id: toastId }
+        );
 
-      setAmount("");
+        setAmount("");
+        celebrateSuccess();
+      });
 
     } catch (error) {
       console.error("Bonding curve swap failed:", error);
