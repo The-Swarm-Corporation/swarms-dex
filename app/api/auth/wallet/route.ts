@@ -201,39 +201,39 @@ export async function POST(request: NextRequest) {
       // Handle password migration for users created with different AUTH_SECRET
       if (signInError.message.includes('Invalid login credentials')) {
         // Check if user exists
-        const { data: existingUser } = await serviceClient
-          .from('auth.users')
-          .select('id')
-          .eq('email', `${publicKey}@phantom.wallet`)
-          .single()
+    const { data: existingUser } = await serviceClient
+      .from('auth.users')
+      .select('id')
+      .eq('email', `${publicKey}@phantom.wallet`)
+      .single()
 
-        if (existingUser) {
-          // User exists but password doesn't match - update password
-          const { error: updateError } = await serviceClient.auth.admin.updateUserById(
-            existingUser.id,
+    if (existingUser) {
+        // User exists but password doesn't match - update password
+        const { error: updateError } = await serviceClient.auth.admin.updateUserById(
+        existingUser.id,
             { password: generateWalletPassword(publicKey) }
-          )
+      )
 
-          if (updateError) throw updateError
+        if (updateError) throw updateError
 
           // Try signing in again with new password
-          const { data: retrySignInData, error: retrySignInError } = await supabase.auth.signInWithPassword({
-            email: `${publicKey}@phantom.wallet`,
+        const { data: retrySignInData, error: retrySignInError } = await supabase.auth.signInWithPassword({
+        email: `${publicKey}@phantom.wallet`,
             password: generateWalletPassword(publicKey)
-          })
+        })
 
-          if (retrySignInError) throw retrySignInError
-          signInData = retrySignInData
-        } else {
+        if (retrySignInError) throw retrySignInError
+        signInData = retrySignInData
+    } else {
           // If user doesn't exist, proceed with normal signup flow
           // Case 2: Invalid credentials - create new user
           // Use service role client for signup to bypass email confirmation
-          const { data: signUpData, error: signUpError } = await serviceClient.auth.admin.createUser({
-            email: `${publicKey}@phantom.wallet`,
+        const { data: signUpData, error: signUpError } = await serviceClient.auth.admin.createUser({
+        email: `${publicKey}@phantom.wallet`,
             password: generateWalletPassword(publicKey),
-            email_confirm: true,
-            user_metadata: { wallet_address: publicKey }
-          })
+        email_confirm: true,
+        user_metadata: { wallet_address: publicKey }
+      })
 
           if (signUpError) {
             // If user already exists, try to sign in again
@@ -242,12 +242,12 @@ export async function POST(request: NextRequest) {
                 email: `${publicKey}@phantom.wallet`,
                 password: generateWalletPassword(publicKey)
               })
-              
+
               if (existingUserError) {
                 console.error('Error signing in existing user:', existingUserError)
                 throw existingUserError
-              }
-              
+    }
+
               signInData = existingUserSignIn
             } else {
               console.error('Sign up error:', signUpError)
@@ -255,7 +255,7 @@ export async function POST(request: NextRequest) {
             }
           } else {
             signInData = signUpData
-          }
+    }
 
           // Create web3users record if it doesn't exist
           const { error: web3UserError } = await serviceClient
@@ -276,9 +276,9 @@ export async function POST(request: NextRequest) {
 
           // After signup, explicitly sign in to get a session
           const { data: signInAfterSignupData, error: signInAfterSignupError } = await supabase.auth.signInWithPassword({
-            email: `${publicKey}@phantom.wallet`,
+      email: `${publicKey}@phantom.wallet`,
             password: generateWalletPassword(publicKey)
-          })
+    })
 
           if (signInAfterSignupError) {
             console.error('Sign in after signup error:', signInAfterSignupError)
@@ -287,7 +287,7 @@ export async function POST(request: NextRequest) {
           
           if (!signInAfterSignupData?.session) {
             throw new Error('No session created after signup')
-          }
+      }
 
           const response = NextResponse.json({
             user: signInAfterSignupData.user,
@@ -349,7 +349,7 @@ export async function POST(request: NextRequest) {
         if (!retrySignInData?.session) throw new Error('No session created during retry sign in')
 
         signInData = retrySignInData
-      } else {
+    } else {
         // If it's any other error, throw it
         throw signInError
       }
@@ -387,7 +387,7 @@ export async function POST(request: NextRequest) {
       throw web3UserError
     }
 
-    const response = NextResponse.json({ 
+    const response = NextResponse.json({
       user,
       session: signInData.session
     })

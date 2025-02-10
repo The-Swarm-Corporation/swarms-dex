@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { AlertCircle, Loader } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { useAuth } from '@/components/providers/auth-provider';
 
 // Types
 type TokenAmount = {
@@ -40,19 +41,6 @@ type TokenData = {
   logoURI?: string;
 };
 
-interface PhantomWindow extends Window {
-  phantom?: {
-    solana?: {
-      connect(): Promise<{ publicKey: PublicKey }>;
-      disconnect(): Promise<void>;
-      isConnected: boolean;
-      publicKey: PublicKey | null;
-    };
-  };
-}
-
-declare const window: PhantomWindow;
-
 const RPC_URLS = [
   process.env.NEXT_PUBLIC_RPC_URL,
   'https://api.mainnet-beta.solana.com',
@@ -63,11 +51,10 @@ const RPC_URLS = [
 const JUPITER_TOKEN_LIST_URL = 'https://token.jup.ag/strict';
 
 const TokenGallery: React.FC = () => {
+  const { user, loading: authLoading, isAuthenticated, walletAddress } = useAuth();
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
-  const [connected, setConnected] = useState<boolean>(false);
-  const [publicKey, setPublicKey] = useState<string | null>(null);
   const [tokenList, setTokenList] = useState<Map<string, JupiterToken>>(new Map());
 
   // Fetch Jupiter token list
@@ -103,46 +90,21 @@ const TokenGallery: React.FC = () => {
     throw new Error('All RPC endpoints failed');
   };
 
-  const checkWalletConnection = async () => {
-    if (window.phantom?.solana?.isConnected && window.phantom.solana.publicKey) {
-      setConnected(true);
-      setPublicKey(window.phantom.solana.publicKey.toString());
-      return true;
-    }
-    return false;
-  };
-
+  // Fetch tokens when authenticated and wallet address is available
   useEffect(() => {
-    checkWalletConnection().then(isConnected => {
-      if (isConnected && window.phantom?.solana?.publicKey) {
-        fetchTokens(window.phantom.solana.publicKey.toString());
-      }
-    });
-  }, []);
-
-  const connectWallet = async () => {
-    try {
-      if (!window.phantom?.solana) {
-        throw new Error('Phantom wallet not found! Please install it first.');
-      }
-
-      const response = await window.phantom.solana.connect();
-      setConnected(true);
-      setPublicKey(response.publicKey.toString());
-      await fetchTokens(response.publicKey.toString());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to connect wallet');
+    if (!authLoading && isAuthenticated && walletAddress) {
+      fetchTokens(walletAddress);
     }
-  };
+  }, [authLoading, isAuthenticated, walletAddress]);
 
-  const fetchTokens = async (walletPublicKey: string) => {
+  const fetchTokens = async (address: string) => {
     setLoading(true);
     setError('');
     try {
       const connection = await getWorkingConnection();
       
       const response = await connection.getParsedTokenAccountsByOwner(
-        new PublicKey(walletPublicKey),
+        new PublicKey(address),
         { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
       );
 
@@ -171,48 +133,35 @@ const TokenGallery: React.FC = () => {
     }
   };
 
-  const disconnectWallet = async () => {
-    try {
-      if (window.phantom?.solana) {
-        await window.phantom.solana.disconnect();
-        setConnected(false);
-        setPublicKey(null);
-        setTokens([]);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to disconnect wallet');
-    }
-  };
+  // Show loading state while auth is loading
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-black p-8 flex justify-center items-center">
+        <Loader className="h-12 w-12 animate-spin text-red-600" />
+      </div>
+    );
+  }
+
+  // Show message if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-black p-8">
+        <div className="text-center py-20 border border-red-900/30 rounded-xl bg-black">
+          <p className="text-red-500 text-xl">Please connect your wallet to view your holdings</p>
+          <p className="text-gray-600 mt-2">Use the wallet button in the navigation bar to connect</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-black p-8">
       {/* Header */}
       <div className="mb-8 text-center">
         <h1 className="text-5xl font-bold text-red-600 mb-6 tracking-tighter">Token Holdings</h1>
-        <div className="flex justify-center gap-4">
-          {!connected ? (
-            <button
-              onClick={connectWallet}
-              className="bg-red-600 hover:bg-red-700 text-white px-8 py-4 rounded-lg 
-                       shadow-lg transform transition hover:scale-105 
-                       border border-red-400 hover:shadow-red-500/50"
-            >
-              Connect Phantom Wallet
-            </button>
-          ) : (
-            <button
-              onClick={disconnectWallet}
-              className="bg-black hover:bg-gray-900 text-red-500 px-8 py-4 rounded-lg 
-                       shadow-lg transform transition hover:scale-105 
-                       border border-red-500 hover:shadow-red-500/50"
-            >
-              Disconnect Wallet
-            </button>
-          )}
-        </div>
-        {publicKey && (
+        {walletAddress && (
           <p className="text-red-400 mt-4 font-mono text-sm">
-            Connected: {publicKey.slice(0, 4)}...{publicKey.slice(-4)}
+            Wallet: {walletAddress.slice(0, 4)}...{walletAddress.slice(-4)}
           </p>
         )}
       </div>
@@ -270,10 +219,10 @@ const TokenGallery: React.FC = () => {
       </div>
 
       {/* Empty State */}
-      {connected && !loading && tokens.length === 0 && (
+      {!loading && tokens.length === 0 && (
         <div className="text-center py-20 border border-red-900/30 rounded-xl bg-black">
           <p className="text-red-500 text-xl">No tokens found in this wallet</p>
-          <p className="text-gray-600 mt-2">Connect a different wallet or try again later</p>
+          <p className="text-gray-600 mt-2">Try connecting a different wallet or check back later</p>
         </div>
       )}
     </div>
