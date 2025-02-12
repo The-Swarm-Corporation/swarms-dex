@@ -14,6 +14,7 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/providers/auth-provider'
 import { toast } from 'sonner'
 import { Separator } from "@/components/ui/separator"
+import { TokenHolders } from '@/components/token-holders'
 
 interface TokenDetails {
   mint_address: string
@@ -47,6 +48,7 @@ interface TokenDetails {
   twitter_handle?: string
   telegram_group?: string
   discord_server?: string
+  current_supply?: number
 }
 
 interface TokenStatProps {
@@ -347,7 +349,8 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
         } : null,
         twitter_handle: data.twitter_handle,
         telegram_group: data.telegram_group,
-        discord_server: data.discord_server
+        discord_server: data.discord_server,
+        current_supply: data.current_supply
       }
       
       setToken(prev => {
@@ -526,13 +529,20 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
             </CardContent>
           </Card>
 
-          {/* Market Stats and Order Book */}
+          {/* Market Stats, Order Book and Token Holders */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <MarketStats 
-              mintAddress={token.mint_address} 
-              symbol={token.token_symbol}
-              poolData={token.market?.stats || null}
-            />
+            <div className="space-y-6">
+              <MarketStats 
+                mintAddress={token.mint_address} 
+                symbol={token.token_symbol}
+                poolData={token.market?.stats || null}
+              />
+              <TokenHolders
+                mintAddress={token.mint_address}
+                symbol={token.token_symbol}
+                totalSupply={token.current_supply || 0}
+              />
+            </div>
             <OrderBook 
               mintAddress={token.mint_address} 
               symbol={token.token_symbol}
