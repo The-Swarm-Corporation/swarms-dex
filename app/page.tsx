@@ -19,6 +19,7 @@ function TokenCard({ token }: { token: Web3Agent & {
       price: number
       volume24h: number
       apy: number
+      marketCap: number
     }
   }
 } }) {
@@ -45,6 +46,9 @@ function TokenCard({ token }: { token: Web3Agent & {
       maximumFractionDigits: 2
     })
   }
+
+  // Get the most up-to-date market cap value
+  const marketCap = token.market?.stats?.marketCap || token.market_cap || 0
 
   return (
     <Card className="group bg-black/50 border border-red-500/20 hover:border-red-500/40 transition-all hover:scale-[1.02] hover:shadow-lg hover:shadow-red-500/10">
@@ -105,7 +109,7 @@ function TokenCard({ token }: { token: Web3Agent & {
           </div>
           <div className="space-y-2">
             <div className="text-sm text-gray-400">Market Cap</div>
-            <div className="font-mono text-lg">${formatValue(token.market_cap)}</div>
+            <div className="font-mono text-lg">${formatValue(marketCap)}</div>
           </div>
         </div>
       </CardContent>
@@ -177,7 +181,14 @@ export default function Home() {
           const marketData = await marketDataResponse.json()
           const updatedTokens = fetchedTokens.map(token => ({
             ...token,
-            market: marketData[token.mint_address]?.market || null,
+            market: {
+              ...marketData[token.mint_address]?.market,
+              stats: {
+                ...marketData[token.mint_address]?.market?.stats,
+                marketCap: marketData[token.mint_address]?.market_cap || token.market_cap || 0
+              }
+            },
+            market_cap: marketData[token.mint_address]?.market_cap || token.market_cap || 0,
             price_change_24h: marketData[token.mint_address]?.price_change_24h || 0
           }))
           setTokens(updatedTokens)

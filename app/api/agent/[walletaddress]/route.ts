@@ -25,15 +25,6 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 const rpcClient = getRPCClient()
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, { auth: { persistSession: false } })
 
-// Utility function to safely create PublicKey
-function createPublicKey(value: string): PublicKey | null {
-  try {
-    return new PublicKey(value)
-  } catch (error) {
-    return null
-  }
-}
-
 async function fetchSwarmsPrice() {
   try {
     const response = await fetch(

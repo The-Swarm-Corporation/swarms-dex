@@ -85,7 +85,7 @@ export async function POST(req: Request) {
           price_change_24h: poolStat.data.stats.price_change_24h || 0,
           current_price: poolStat.data.stats.price,
           volume_24h: poolStat.data.stats.volume24h,
-          market_cap: agent?.market_cap || poolStat.data.stats.volume24h
+          market_cap: agent?.market_cap || (poolStat.data.stats.totalSupply * poolStat.data.stats.price) || 0
         }
       } 
       // If no pool stats but we have agent data
