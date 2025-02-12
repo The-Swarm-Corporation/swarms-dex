@@ -32,6 +32,7 @@ export interface Web3Agent {
   volume_24h?: number
   creator_wallet?: string
   bonding_curve_address?: string
+  image_url?: string | null
   metadata?: {
     pool_created_at?: string
     pool_signature?: string

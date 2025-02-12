@@ -50,28 +50,39 @@ function TokenCard({ token }: { token: Web3Agent & {
     <Card className="group bg-black/50 border border-red-500/20 hover:border-red-500/40 transition-all hover:scale-[1.02] hover:shadow-lg hover:shadow-red-500/10">
       <CardHeader>
         <div className="flex items-center justify-between">
-          <div className="space-y-1">
-            <h2 className="text-xl font-bold group-hover:text-red-500 transition-colors">
-              {token.name}
-              {token.is_verified && (
-                <Badge variant="secondary" className="ml-2">
-                  Verified
+          <div className="flex items-center gap-4">
+            {token.image_url && (
+              <div className="w-12 h-12 rounded-full overflow-hidden bg-black/20">
+                <img 
+                  src={token.image_url} 
+                  alt={`${token.name} logo`}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            )}
+            <div className="space-y-1">
+              <h2 className="text-xl font-bold group-hover:text-red-500 transition-colors">
+                {token.name}
+                {token.is_verified && (
+                  <Badge variant="secondary" className="ml-2">
+                    Verified
+                  </Badge>
+                )}
+              </h2>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="w-fit">
+                  {token.token_symbol}
                 </Badge>
-              )}
-            </h2>
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className="w-fit">
-                {token.token_symbol}
-              </Badge>
-              {token.price_change_24h !== undefined && (
-                <Badge
-                  variant={token.price_change_24h >= 0 ? "default" : "destructive"}
-                  className={`${token.price_change_24h >= 0 ? "bg-green-500/20 text-green-500 hover:bg-green-500/30" : ""}`}
-                >
-                  {token.price_change_24h >= 0 ? "+" : ""}
-                  {token.price_change_24h.toFixed(2)}%
-                </Badge>
-              )}
+                {token.price_change_24h !== undefined && (
+                  <Badge
+                    variant={token.price_change_24h >= 0 ? "default" : "destructive"}
+                    className={`${token.price_change_24h >= 0 ? "bg-green-500/20 text-green-500 hover:bg-green-500/30" : ""}`}
+                  >
+                    {token.price_change_24h >= 0 ? "+" : ""}
+                    {token.price_change_24h.toFixed(2)}%
+                  </Badge>
+                )}
+              </div>
             </div>
           </div>
           {token.is_swarm ? (
