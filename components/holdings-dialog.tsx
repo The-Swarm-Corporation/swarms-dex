@@ -25,6 +25,7 @@ interface TokenHolding {
   decimals: number
   currentPrice: number
   value: number
+  imageUrl?: string | null
 }
 
 export function HoldingsDialog() {
@@ -213,6 +214,15 @@ export function HoldingsDialog() {
                     >
                       <div className="space-y-1.5">
                         <div className="font-bold text-lg flex items-center gap-2">
+                          {token.imageUrl ? (
+                            <img 
+                              src={token.imageUrl} 
+                              alt={token.symbol}
+                              className="w-6 h-6 rounded-full"
+                            />
+                          ) : (
+                            <div className="w-6 h-6 rounded-full bg-red-600/20" />
+                          )}
                           {token.symbol}
                           <Link
                             href={`/agent/${token.mintAddress}`}

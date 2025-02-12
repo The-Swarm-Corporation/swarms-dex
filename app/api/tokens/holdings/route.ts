@@ -41,6 +41,7 @@ interface AgentData {
   token_symbol: string
   current_price: number | null
   market_cap: number | null
+  image_url: string | null
 }
 
 export async function GET(req: Request) {
@@ -137,7 +138,8 @@ export async function GET(req: Request) {
           mint_address,
           token_symbol,
           current_price,
-          market_cap
+          market_cap,
+          image_url
         `)
         .eq('mint_address', mintAddress)
         .limit(1)
@@ -181,7 +183,8 @@ export async function GET(req: Request) {
         {
           token_symbol: agent.token_symbol,
           current_price: agent.current_price || 0,
-          market_cap: agent.market_cap || 0
+          market_cap: agent.market_cap || 0,
+          image_url: agent.image_url
         }
       ]
     }))
@@ -226,7 +229,8 @@ export async function GET(req: Request) {
             uiAmount: balance,
             decimals,
             currentPrice,
-            value: currentPrice * balance
+            value: currentPrice * balance,
+            imageUrl: agent.image_url
           }
         } else {
           logger.debug("No agent found for token", {

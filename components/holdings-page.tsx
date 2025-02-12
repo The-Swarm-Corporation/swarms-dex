@@ -17,6 +17,7 @@ interface TokenHolding {
   decimals: number;
   currentPrice: number;
   value: number;
+  imageUrl?: string | null;
 }
 
 const TokenGallery: React.FC = () => {
@@ -178,6 +179,15 @@ const TokenGallery: React.FC = () => {
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex flex-col">
                     <div className="flex items-center gap-2">
+                      {token.imageUrl ? (
+                        <img 
+                          src={token.imageUrl} 
+                          alt={token.symbol}
+                          className="w-8 h-8 rounded-full"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-red-600/20" />
+                      )}
                       <span className="text-red-500 font-bold text-xl">
                         {token.symbol}
                       </span>
