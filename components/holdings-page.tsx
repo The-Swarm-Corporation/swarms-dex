@@ -209,7 +209,7 @@ const TokenGallery: React.FC = () => {
                     <div className="text-right">
                       <p className="text-gray-600 text-sm">Price</p>
                       <p className="text-red-300 font-mono">
-                        ${token.currentPrice.toFixed(4)}
+                        ${token.currentPrice.toFixed(11)}
                       </p>
                     </div>
                   </div>
