@@ -22,6 +22,16 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { getAssociatedTokenAddress } from "@solana/spl-token"
 import ReactConfetti from 'react-confetti'
 
+// Add Phantom provider type
+type PhantomProvider = {
+  connect: (opts?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey: PublicKey }>;
+  disconnect: () => Promise<void>;
+  signTransaction: (transaction: Transaction) => Promise<Transaction>;
+  signMessage: (message: Uint8Array, encoding: string) => Promise<{ signature: Uint8Array; publicKey: PublicKey; }>;
+  isConnected: boolean;
+  isPhantom?: boolean;
+}
+
 interface TokenTradingPanelProps {
   mintAddress: string
   symbol: string
@@ -159,7 +169,7 @@ export function TokenTradingPanel({
       }
 
       // @ts-ignore - Phantom wallet type
-      const provider = window?.phantom?.solana;
+      const provider = window?.phantom?.solana as PhantomProvider;
       if (!provider?.isPhantom) {
         toast.error("Please install Phantom wallet");
         return;
@@ -276,7 +286,7 @@ export function TokenTradingPanel({
       }
 
       // @ts-ignore - Phantom wallet type
-      const provider = window?.phantom?.solana;
+      const provider = window?.phantom?.solana as PhantomProvider;
       if (!provider?.isPhantom) {
         toast.error("Please install Phantom wallet");
         return;
@@ -401,13 +411,12 @@ export function TokenTradingPanel({
 
       try {
         // Add robust wallet detection with retries
-        let provider;
+        let provider: PhantomProvider | null = null;
         let retries = 0;
         const maxRetries = 5;
 
         while (retries < maxRetries) {
-          // @ts-ignore - Phantom wallet type
-          provider = window?.phantom?.solana;
+          provider = window?.phantom?.solana as PhantomProvider;
 
           if (provider?.isPhantom) {
             try {
@@ -420,8 +429,7 @@ export function TokenTradingPanel({
           
           if (retries === maxRetries - 1) {
             try {
-              // @ts-ignore - Phantom wallet type
-              provider = window?.phantom?.solana;
+              provider = window?.phantom?.solana as PhantomProvider;
               if (provider?.isPhantom) {
                 await provider.connect();
                 break;
