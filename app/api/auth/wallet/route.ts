@@ -42,15 +42,6 @@ async function getNonce(nonce: string) {
   return data
 }
 
-async function updateNonceAttempts(nonce: string, attempts: number) {
-  const { error } = await serviceClient
-    .from('auth_nonces')
-    .update({ attempts })
-    .eq('nonce', nonce)
-  
-  if (error) throw error
-}
-
 async function deleteNonce(nonce: string) {
   const { error } = await serviceClient
     .from('auth_nonces')

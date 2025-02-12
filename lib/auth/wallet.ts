@@ -116,6 +116,17 @@ export async function signOut() {
   const supabase = createClientComponentClient()
   
   try {
+    // First call our backend endpoint to clear cookies
+    const response = await fetch("/api/auth/wallet", {
+      method: "DELETE",
+      credentials: 'include'
+    })
+
+    if (!response.ok) {
+      throw new Error("Failed to sign out")
+    }
+
+    // Then sign out from Supabase client
     const { error } = await supabase.auth.signOut()
     if (error) throw error
 
