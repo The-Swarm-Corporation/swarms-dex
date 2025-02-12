@@ -10,6 +10,7 @@ interface MarketStatsProps {
     price: number
     volume24h: number
     apy: number
+    marketCap?: number
   } | null
 }
 
@@ -49,6 +50,10 @@ export function MarketStats({ mintAddress, symbol, poolData }: MarketStatsProps)
           <div className="flex justify-between items-center">
             <span className="text-gray-400">24h Volume</span>
             <span className="font-mono font-medium">${(poolData?.volume24h || 0).toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-gray-400">Market Cap</span>
+            <span className="font-mono font-medium">${(poolData?.marketCap || 0).toLocaleString()}</span>
           </div>
         </div>
       </CardContent>

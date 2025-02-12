@@ -34,6 +34,7 @@ interface TokenDetails {
       volume24h: number
       tvl: number
       apy: number
+      marketCap?: number
     } | null
     transactions: Array<{
       signature: string
@@ -335,7 +336,10 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
         is_swarm: data.is_swarm,
         bonding_curve_address: data.bonding_curve_address,
         market: data.market ? {
-          stats: data.market.stats || null,
+          stats: {
+            ...(data.market.stats || {}),
+            marketCap: data.market_cap || 0
+          },
           transactions: data.market.transactions || []
         } : null
       }
