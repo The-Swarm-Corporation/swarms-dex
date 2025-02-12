@@ -226,7 +226,7 @@ export function TokenTradingPanel({
         throw new Error("Failed to submit transaction");
       }
 
-      const { signature, confirmed } = await submitResponse.json();
+      const { signature, confirmed, tokenAmount } = await submitResponse.json();
 
       if (!confirmed) {
         throw new Error("Transaction failed to confirm");
@@ -236,7 +236,9 @@ export function TokenTradingPanel({
       requestAnimationFrame(() => {
         toast.success(
           <div>
-            Pool trade successful!{" "}
+            {action === "buy" ? 
+              `🎉 Congratulations! You've bought ${Number(tokenAmount).toLocaleString()} ${symbol}!` :
+              `You've sold ${Number(tokenAmount).toLocaleString()} ${symbol}`}{" "}
             <a
               href={`https://solscan.io/tx/${signature}`}
               target="_blank"
@@ -349,13 +351,15 @@ export function TokenTradingPanel({
         throw new Error("Failed to submit transaction");
       }
 
-      const { signature } = await submitResponse.json();
+      const { signature, tokenAmount } = await submitResponse.json();
 
       // Handle success without triggering refresh
       requestAnimationFrame(() => {
         toast.success(
           <div>
-            Bonding curve swap successful!{" "}
+            {action === "buy" ? 
+              `🎉 Congratulations! You've bought ${Number(tokenAmount).toLocaleString()} ${symbol} through the bonding curve!` :
+              `You've sold ${Number(tokenAmount).toLocaleString()} ${symbol} through the bonding curve`}{" "}
             <a
               href={`https://solscan.io/tx/${signature}`}
               target="_blank"

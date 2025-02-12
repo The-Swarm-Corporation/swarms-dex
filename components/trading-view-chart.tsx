@@ -11,17 +11,42 @@ import {
   UTCTimestamp,
   PriceFormat
 } from 'lightweight-charts'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MarketData } from "@/lib/market"
 import { formatNumber } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 
 interface TradingViewChartProps {
   data: MarketData | null
   symbol: string
 }
 
+// Time intervals in milliseconds
+const TIME_INTERVALS = {
+  '1H': 60 * 60 * 1000,
+  '4H': 4 * 60 * 60 * 1000,
+  '1D': 24 * 60 * 60 * 1000,
+  '1W': 7 * 24 * 60 * 60 * 1000,
+  'ALL': Infinity
+} as const
+
+type TimeInterval = keyof typeof TIME_INTERVALS
+
 export function TradingViewChart({ data, symbol }: TradingViewChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
+  const [selectedInterval, setSelectedInterval] = useState<TimeInterval>('1D')
+
+  // Filter data based on selected time interval
+  const getFilteredData = () => {
+    if (!data?.priceHistory) return []
+    
+    const now = Date.now()
+    const interval = TIME_INTERVALS[selectedInterval]
+    
+    return data.priceHistory.filter(item => 
+      selectedInterval === 'ALL' || (now - item.time.getTime()) <= interval
+    )
+  }
 
   useEffect(() => {
     if (!chartContainerRef.current || !data) return
@@ -137,8 +162,9 @@ export function TradingViewChart({ data, symbol }: TradingViewChartProps) {
       borderVisible: false,
     })
 
-    // Format the data
-    const formattedData = data.priceHistory.map(item => ({
+    // Format the filtered data
+    const filteredData = getFilteredData()
+    const formattedData = filteredData.map(item => ({
       time: Math.floor(item.time.getTime() / 1000) as UTCTimestamp,
       open: item.open,
       high: item.high,
@@ -146,7 +172,7 @@ export function TradingViewChart({ data, symbol }: TradingViewChartProps) {
       close: item.close,
     }))
 
-    const volumeData = data.priceHistory.map(item => ({
+    const volumeData = filteredData.map(item => ({
       time: Math.floor(item.time.getTime() / 1000) as UTCTimestamp,
       value: item.volume,
       color: item.close >= item.open ? '#22c55e80' : '#ef444480'
@@ -173,14 +199,29 @@ export function TradingViewChart({ data, symbol }: TradingViewChartProps) {
       window.removeEventListener('resize', handleResize)
       chart.remove()
     }
-  }, [data, symbol])
+  }, [data, symbol, selectedInterval])
 
   return (
     <Card className="bg-black/50 border-red-600/20">
       <CardHeader>
-        <CardTitle className="text-xl font-bold text-red-600">
-          {symbol} Price Chart
-        </CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-xl font-bold text-red-600">
+            {symbol} Price Chart
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            {(Object.keys(TIME_INTERVALS) as TimeInterval[]).map((interval) => (
+              <Button
+                key={interval}
+                variant={selectedInterval === interval ? "default" : "outline"}
+                size="sm"
+                className={selectedInterval === interval ? "bg-red-600 hover:bg-red-700" : "hover:bg-red-600/10"}
+                onClick={() => setSelectedInterval(interval)}
+              >
+                {interval}
+              </Button>
+            ))}
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <div ref={chartContainerRef} className="w-full h-[400px]" />

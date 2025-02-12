@@ -172,16 +172,47 @@ export async function PUT(req: Request) {
         throw error;
       }
 
-      logger.info("Transaction confirmed quickly", { data: { signature } });
+      // Get transaction details to calculate token amount
+      const txInfo = await rpcClient.getParsedTransaction(signature, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0
+      });
+
+      if (!txInfo?.meta?.postTokenBalances || !txInfo?.meta?.preTokenBalances) {
+        throw new Error('Failed to get transaction token balances');
+      }
+
+      // Find the token balance changes for the user's account
+      const preTokenBalance = txInfo.meta.preTokenBalances[0];
+      const postTokenBalance = txInfo.meta.postTokenBalances[0];
+
+      if (!preTokenBalance?.uiTokenAmount || !postTokenBalance?.uiTokenAmount) {
+        throw new Error('Failed to get token amounts from transaction');
+      }
+
+      // Calculate the token amount change
+      const tokenAmount = Math.abs(
+        (postTokenBalance.uiTokenAmount.uiAmount || 0) - 
+        (preTokenBalance.uiTokenAmount.uiAmount || 0)
+      );
+
+      logger.info("Transaction confirmed quickly", { 
+        data: { 
+          signature,
+          tokenAmount
+        } 
+      });
+
       return new Response(JSON.stringify({ 
         signature,
-        confirmed: true 
+        confirmed: true,
+        tokenAmount
       }), { status: 200 });
 
-    } catch (confirmError) {
+    } catch (error) {
       // If quick confirmation fails, check transaction status (MEDIUM priority)
       try {
-        const txInfo = await rpcClient.getTransaction(signature, {
+        const txInfo = await rpcClient.getParsedTransaction(signature, {
           commitment: 'confirmed',
           maxSupportedTransactionVersion: 0
         });
@@ -192,12 +223,35 @@ export async function PUT(req: Request) {
           throw error;
         }
 
+        // Calculate token amount from transaction info
+        if (!txInfo?.meta?.postTokenBalances || !txInfo?.meta?.preTokenBalances) {
+          throw new Error('Failed to get transaction token balances');
+        }
+
+        const preTokenBalance = txInfo.meta.preTokenBalances[0];
+        const postTokenBalance = txInfo.meta.postTokenBalances[0];
+
+        if (!preTokenBalance?.uiTokenAmount || !postTokenBalance?.uiTokenAmount) {
+          throw new Error('Failed to get token amounts from transaction');
+        }
+
+        const tokenAmount = Math.abs(
+          (postTokenBalance.uiTokenAmount.uiAmount || 0) - 
+          (preTokenBalance.uiTokenAmount.uiAmount || 0)
+        );
+
         // If we found the transaction and it has no errors, it succeeded
         if (txInfo) {
-          logger.info("Transaction found and successful", { data: { signature } });
+          logger.info("Transaction found and successful", { 
+            data: { 
+              signature,
+              tokenAmount
+            } 
+          });
           return new Response(JSON.stringify({ 
             signature,
-            confirmed: true 
+            confirmed: true,
+            tokenAmount
           }), { status: 200 });
         }
       } catch (txCheckError) {
