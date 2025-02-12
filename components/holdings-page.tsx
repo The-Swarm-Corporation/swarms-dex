@@ -1,148 +1,74 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Connection, PublicKey } from '@solana/web3.js';
-import { AlertCircle, Loader } from 'lucide-react';
+import { AlertCircle, Loader, RefreshCw } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useAuth } from '@/components/providers/auth-provider';
+import Link from 'next/link';
+import { ExternalLink } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
 
-// Types
-type TokenAmount = {
-  amount: string;
-  decimals: number;
-  uiAmount: number | null;
-  uiAmountString: string;
-};
-
-type TokenInfo = {
-  mint: string;
-  owner: string;
-  tokenAmount: TokenAmount;
-  state: string;
-};
-
-type JupiterToken = {
-  address: string;
-  chainId: number;
-  decimals: number;
-  name: string;
+interface TokenHolding {
   symbol: string;
-  logoURI?: string;
-  tags?: string[];
-  verified?: boolean;
-};
-
-type TokenData = {
-  mint: string;
-  amount: number | null;
+  balance: number;
+  mintAddress: string;
+  uiAmount: number;
   decimals: number;
-  symbol: string;
-  name: string;
-  logoURI?: string;
-};
-
-const RPC_URLS = [
-  process.env.NEXT_PUBLIC_RPC_URL,
-  'https://api.mainnet-beta.solana.com',
-  'https://solana-mainnet.g.alchemy.com/v2/demo',
-  'https://rpc.ankr.com/solana'
-];
-
-const JUPITER_TOKEN_LIST_URL = 'https://token.jup.ag/strict';
+  currentPrice: number;
+  value: number;
+}
 
 const TokenGallery: React.FC = () => {
-  const { user, loading: authLoading, isAuthenticated, walletAddress } = useAuth();
-  const [tokens, setTokens] = useState<TokenData[]>([]);
+  const { loading: authLoading, isAuthenticated, walletAddress } = useAuth();
+  const [holdings, setHoldings] = useState<TokenHolding[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
-  const [tokenList, setTokenList] = useState<Map<string, JupiterToken>>(new Map());
 
-  // Fetch Jupiter token list
-  useEffect(() => {
-    const fetchTokenList = async () => {
-      try {
-        const response = await fetch(JUPITER_TOKEN_LIST_URL);
-        if (!response.ok) {
-          throw new Error('Failed to fetch token list');
-        }
-        const data = await response.json();
-        const tokenMap = new Map<string, JupiterToken>();
-        data.forEach((token: JupiterToken) => {
-          // Store by mint address
-          tokenMap.set(token.address.toLowerCase(), token);
-        });
-        setTokenList(tokenMap);
-      } catch (err) {
-        console.error('Failed to fetch Jupiter token list:', err);
-        setError('Failed to load token metadata');
-      }
-    };
-    fetchTokenList();
-  }, []);
-
-  const getWorkingConnection = async (): Promise<Connection> => {
-    for (const url of RPC_URLS) {
-      if (!url) continue;
-      try {
-        const connection = new Connection(url, 'confirmed');
-        await connection.getLatestBlockhash();
-        return connection;
-      } catch (err) {
-        console.warn(`RPC ${url} failed, trying next...`);
-        continue;
-      }
+  const fetchHoldings = async () => {
+    if (!isAuthenticated || !walletAddress) {
+      setError('Please connect your wallet first');
+      return;
     }
-    throw new Error('All RPC endpoints failed');
-  };
 
-  // Fetch tokens when authenticated and wallet address is available
-  useEffect(() => {
-    if (!authLoading && isAuthenticated && walletAddress) {
-      fetchTokens(walletAddress);
-    }
-  }, [authLoading, isAuthenticated, walletAddress]);
-
-  const fetchTokens = async (address: string) => {
-    setLoading(true);
-    setError('');
     try {
-      const connection = await getWorkingConnection();
+      setLoading(true);
+      setError('');
       
-      const response = await connection.getParsedTokenAccountsByOwner(
-        new PublicKey(address),
-        { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
-      );
+      const response = await fetch(`/api/tokens/holdings?wallet=${walletAddress}`, {
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to fetch holdings');
+      }
 
-      const tokenData = response.value
-        .map((item: any) => {
-          const mint = item.account.data.parsed.info.mint;
-          const metadata = tokenList.get(mint.toLowerCase());
-          const amount = item.account.data.parsed.info.tokenAmount.uiAmount;
-          
-          // Skip tokens with zero balance
-          if (!amount || amount === 0) return null;
+      const holdings = await response.json();
+      if (!Array.isArray(holdings)) {
+        throw new Error('Invalid holdings data received');
+      }
 
-          const token: TokenData = {
-            mint,
-            amount,
-            decimals: item.account.data.parsed.info.tokenAmount.decimals,
-            symbol: metadata?.symbol || mint.slice(0, 6),
-            name: metadata?.name || `Token ${mint.slice(0, 8)}...`,
-            logoURI: metadata?.logoURI
-          };
-          return token;
-        })
-        .filter((token): token is TokenData => token !== null)
-        .sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0));
-
-      setTokens(tokenData);
+      console.log('Holdings fetched:', holdings);
+      setHoldings(holdings);
     } catch (err) {
-      console.error('Token fetch error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch tokens');
+      console.error('Failed to fetch holdings:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch holdings';
+      setError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!authLoading && isAuthenticated && walletAddress) {
+      fetchHoldings();
+    }
+  }, [authLoading, isAuthenticated, walletAddress]);
 
   // Show loading state while auth is loading
   if (authLoading) {
@@ -165,16 +91,32 @@ const TokenGallery: React.FC = () => {
     );
   }
 
+  const currencies = holdings.filter(h => h.symbol === "SOL" || h.symbol === "SWARMS");
+  const agentTokens = holdings.filter(h => h.symbol !== "SOL" && h.symbol !== "SWARMS");
+  const totalValue = holdings.reduce((sum, holding) => sum + holding.value, 0);
+
   return (
     <div className="min-h-screen bg-black p-8">
       {/* Header */}
       <div className="mb-8 text-center">
         <h1 className="text-5xl font-bold text-red-600 mb-6 tracking-tighter">Token Holdings</h1>
-        {walletAddress && (
-          <p className="text-red-400 mt-4 font-mono text-sm">
-            Wallet: {walletAddress.slice(0, 4)}...{walletAddress.slice(-4)}
-          </p>
-        )}
+        <div className="flex items-center justify-center gap-4">
+          {walletAddress && (
+            <p className="text-red-400 mt-4 font-mono text-sm">
+              Wallet: {walletAddress.slice(0, 4)}...{walletAddress.slice(-4)}
+            </p>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-4 text-red-400 hover:text-red-300"
+            onClick={fetchHoldings}
+            disabled={loading}
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Error Display */}
@@ -192,60 +134,93 @@ const TokenGallery: React.FC = () => {
         </div>
       )}
 
-      {/* Token Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {tokens.map((token) => (
-          <div
-            key={token.mint}
-            className="bg-black rounded-xl p-6 transform transition 
-                     hover:scale-105 border border-red-600/50 
-                     shadow-lg hover:shadow-red-600/30"
-          >
-            <div className="flex justify-between items-start mb-4">
-              <div className="flex flex-col">
-                <div className="flex items-center gap-2">
-                  {token.logoURI && (
-                    <img 
-                      src={token.logoURI} 
-                      alt={token.symbol} 
-                      className="w-6 h-6 rounded-full"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                      }}
-                    />
-                  )}
-                  <span className="text-red-500 font-bold text-xl">
-                    {token.symbol}
-                  </span>
-                </div>
-                <span className="text-gray-500 text-sm mt-1">
-                  {token.name}
-                </span>
-              </div>
-              <div className="text-right">
-                <p className="text-red-400 text-sm">Balance</p>
-                <p className="text-white font-bold text-lg">
-                  {token.amount?.toLocaleString(undefined, {
-                    maximumFractionDigits: 6
-                  }) ?? '0'}
-                </p>
-              </div>
-            </div>
-            <div className="mt-4 pt-4 border-t border-red-900/30">
-              <p className="text-gray-600 text-sm">Token Address</p>
-              <p className="text-red-300 font-mono text-sm truncate">
-                {token.mint}
+      {/* Currency Summary */}
+      {!loading && holdings.length > 0 && (
+        <div className="mb-8 p-6 rounded-xl bg-gradient-to-r from-red-600/10 to-red-900/10 border border-red-600/30">
+          <div className="flex justify-between items-center">
+            <div className="space-y-1">
+              <h2 className="text-xl font-bold text-red-500">Portfolio Value</h2>
+              <p className="text-3xl font-bold text-white">
+                ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
             </div>
+            <div className="flex gap-6">
+              {currencies.map((currency) => (
+                <div key={currency.symbol} className="text-right">
+                  <p className="text-sm text-gray-400">{currency.symbol}</p>
+                  <p className="text-lg font-mono text-white">
+                    {currency.uiAmount.toLocaleString(undefined, {
+                      maximumFractionDigits: currency.decimals,
+                    })}
+                  </p>
+                  <p className="text-sm text-gray-400">
+                    ${(currency.value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                </div>
+              ))}
+            </div>
           </div>
-        ))}
-      </div>
+        </div>
+      )}
 
-      {/* Empty State */}
-      {!loading && tokens.length === 0 && (
+      {/* Agent Tokens Grid */}
+      {!loading && agentTokens.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {agentTokens
+            .sort((a, b) => b.value - a.value)
+            .map((token) => (
+              <div
+                key={token.mintAddress}
+                className="bg-black rounded-xl p-6 transform transition 
+                         hover:scale-105 border border-red-600/50 
+                         shadow-lg hover:shadow-red-600/30"
+              >
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-2">
+                      <span className="text-red-500 font-bold text-xl">
+                        {token.symbol}
+                      </span>
+                      <Link
+                        href={`/agent/${token.mintAddress}`}
+                        className="text-gray-400 hover:text-red-500 transition-colors"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                      </Link>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-red-400 text-sm">Balance</p>
+                    <p className="text-white font-bold text-lg">
+                      {token.uiAmount.toLocaleString(undefined, {
+                        maximumFractionDigits: token.decimals,
+                      })}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-4 pt-4 border-t border-red-900/30">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <p className="text-gray-600 text-sm">Value</p>
+                      <p className="text-red-300 font-mono">
+                        ${token.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-gray-600 text-sm">Price</p>
+                      <p className="text-red-300 font-mono">
+                        ${token.currentPrice.toFixed(4)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+        </div>
+      ) : !loading && (
         <div className="text-center py-20 border border-red-900/30 rounded-xl bg-black">
-          <p className="text-red-500 text-xl">No tokens found in this wallet</p>
-          <p className="text-gray-600 mt-2">Try connecting a different wallet or check back later</p>
+          <p className="text-red-500 text-xl">No AI agents currently owned</p>
+          <p className="text-gray-600 mt-2">Purchase agent tokens to get started</p>
         </div>
       )}
     </div>

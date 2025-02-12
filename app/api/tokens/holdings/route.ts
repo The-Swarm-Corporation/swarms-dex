@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js"
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } from "@solana/spl-token"
 import { logger } from "@/lib/logger"
-import { getWeb3AgentByMint } from "@/lib/supabase/api"
+import { getServiceClient } from "@/lib/supabase/client"
 
 const SWARMS_TOKEN_MINT = process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS as string
 
@@ -34,6 +34,13 @@ async function getTokenPrices() {
       swarms: 0
     }
   }
+}
+
+interface AgentData {
+  mint_address: string
+  token_symbol: string
+  current_price: number | null
+  market_cap: number | null
 }
 
 export async function GET(req: Request) {
@@ -88,69 +95,161 @@ export async function GET(req: Request) {
       { programId: TOKEN_PROGRAM_ID }
     )
 
+    // Log all token accounts for debugging
     logger.info("Found token accounts", {
       count: accounts.value.length,
       accounts: accounts.value.map(acc => ({
         mint: acc.account.data.parsed.info.mint,
         balance: acc.account.data.parsed.info.tokenAmount.uiAmount,
+        decimals: acc.account.data.parsed.info.tokenAmount.decimals,
         ata: acc.pubkey.toString()
       }))
     })
 
-    // Filter and process accounts
-    const holdingsPromises = accounts.value
+    // Get all mint addresses except SWARMS
+    const mintAddresses = accounts.value
+      .filter(account => {
+        const tokenAmount = account.account.data.parsed.info.tokenAmount
+        const mint = account.account.data.parsed.info.mint
+        const hasBalance = tokenAmount.uiAmount > 0
+        const notSwarms = mint !== SWARMS_TOKEN_MINT
+        
+        logger.debug("Filtering token account", {
+          mint,
+          balance: tokenAmount.uiAmount,
+          hasBalance,
+          notSwarms,
+          included: hasBalance && notSwarms
+        })
+        
+        return hasBalance && notSwarms
+      })
+      .map(account => account.account.data.parsed.info.mint)
+
+    logger.info("Filtered mint addresses", { mintAddresses })
+
+    // Fetch agent data for each token individually
+    const supabase = getServiceClient()
+    const agentPromises = mintAddresses.map(async (mintAddress) => {
+      const { data, error } = await supabase
+        .from("web3agents")
+        .select(`
+          mint_address,
+          token_symbol,
+          current_price,
+          market_cap
+        `)
+        .eq('mint_address', mintAddress)
+        .limit(1)
+
+      if (error) {
+        logger.error("Failed to fetch agent data for mint", error, { mint: mintAddress })
+        return null
+      }
+
+      // Get the first result if any exists
+      const agent = data?.[0]
+      if (!agent) {
+        logger.debug("No agent found for mint", { mint: mintAddress })
+        return null
+      }
+
+      return agent as AgentData
+    })
+
+    const agentResults = await Promise.all(agentPromises)
+    const agents = agentResults.filter((agent): agent is AgentData => agent !== null)
+
+    logger.info("Found agents in database", {
+      count: agents.length,
+      agents: agents.map((a: AgentData) => ({
+        mint: a.mint_address,
+        symbol: a.token_symbol,
+        price: a.current_price
+      }))
+    })
+
+    // Create a map of mint address to agent data
+    const agentMap = new Map(agents.map((agent: AgentData) => {
+      logger.debug("Creating agent map entry", {
+        original_mint: agent.mint_address,
+        lowercase_mint: agent.mint_address.toLowerCase(),
+        agent_symbol: agent.token_symbol
+      });
+      return [
+        agent.mint_address.toLowerCase(),
+        {
+          token_symbol: agent.token_symbol,
+          current_price: agent.current_price || 0,
+          market_cap: agent.market_cap || 0
+        }
+      ]
+    }))
+
+    // Process token accounts with agent data
+    const agentHoldings = accounts.value
       .filter((account) => {
         const tokenAmount = account.account.data.parsed.info.tokenAmount
         const mint = account.account.data.parsed.info.mint
         return tokenAmount.uiAmount > 0 && mint !== SWARMS_TOKEN_MINT
       })
-      .map(async (account) => {
+      .map((account) => {
         const parsedInfo = account.account.data.parsed.info
         const mintAddress = parsedInfo.mint
         const tokenAmount = parsedInfo.tokenAmount
         const balance = tokenAmount.uiAmount || 0
         const decimals = tokenAmount.decimals
+        
+        // Try to find agent by mint address (case insensitive)
+        logger.debug("Looking up agent for mint", {
+          mint_to_find: mintAddress,
+          mint_to_find_lowercase: mintAddress.toLowerCase(),
+          available_mints: Array.from(agentMap.keys()),
+          has_agent: agentMap.has(mintAddress.toLowerCase())
+        });
+        
+        const agent = agentMap.get(mintAddress.toLowerCase())
 
-        try {
-          const agent = await getWeb3AgentByMint(mintAddress)
-          if (agent) {
-            const currentPrice = agent.current_price || 0
-            logger.debug("Found agent token", {
-              mint: mintAddress,
-              ata: account.pubkey.toString(),
-              symbol: agent.token_symbol,
-              balance,
-              currentPrice,
-            })
-            return {
-              symbol: agent.token_symbol,
-              balance,
-              mintAddress,
-              uiAmount: balance,
-              decimals,
-              currentPrice,
-              value: currentPrice * balance
-            }
-          } else {
-            logger.debug("No agent found for token", {
-              mint: mintAddress,
-              ata: account.pubkey.toString(),
-              balance,
-              decimals
-            })
-          }
-        } catch (error) {
-          logger.error("Error fetching agent details", error as Error, {
+        if (agent) {
+          const currentPrice = agent.current_price || 0
+          logger.debug("Found agent token", {
+            mint: mintAddress,
+            ata: account.pubkey.toString(),
+            symbol: agent.token_symbol,
+            balance,
+            currentPrice
+          })
+          return {
+            symbol: agent.token_symbol,
+            balance,
             mintAddress,
-            ata: account.pubkey.toString()
+            uiAmount: balance,
+            decimals,
+            currentPrice,
+            value: currentPrice * balance
+          }
+        } else {
+          logger.debug("No agent found for token", {
+            mint: mintAddress,
+            balance,
+            decimals
           })
         }
         return null
       })
+      .filter((holding): holding is NonNullable<typeof holding> => holding !== null)
+      .sort((a, b) => b.value - a.value)
 
-    const agentHoldings = (await Promise.all(holdingsPromises))
-      .filter((holding) => holding !== null)
-      .sort((a, b) => b!.value - a!.value)
+    logger.info("Processed agent holdings", {
+      totalAccounts: accounts.value.length,
+      foundAgents: agentHoldings.length,
+      agents: agentHoldings.map(h => ({
+        symbol: h.symbol,
+        balance: h.balance,
+        value: h.value,
+        mint: h.mintAddress
+      }))
+    })
 
     // Combine all holdings including SOL and SWARMS
     const allHoldings = [
@@ -178,7 +277,13 @@ export async function GET(req: Request) {
     logger.info("Holdings fetched successfully", {
       count: allHoldings.length,
       currencies: allHoldings.filter(h => h.symbol === "SOL" || h.symbol === "SWARMS").length,
-      agents: allHoldings.filter(h => h.symbol !== "SOL" && h.symbol !== "SWARMS").length
+      agents: allHoldings.filter(h => h.symbol !== "SOL" && h.symbol !== "SWARMS").length,
+      holdings: allHoldings.map(h => ({
+        symbol: h.symbol,
+        balance: h.balance,
+        value: h.value,
+        mint: h.mintAddress
+      }))
     })
 
     return NextResponse.json(allHoldings)
