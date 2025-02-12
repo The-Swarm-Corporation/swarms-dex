@@ -1,9 +1,9 @@
-import { Connection, PublicKey, Transaction, ComputeBudgetProgram } from "@solana/web3.js";
+import { PublicKey, Transaction, ComputeBudgetProgram } from "@solana/web3.js";
 import { BN } from "@project-serum/anchor";
 import AmmImpl from "@mercurial-finance/dynamic-amm-sdk";
 import { logger } from "@/lib/logger";
+import { getRPCClient } from "@/lib/rpc/config";
 
-const RPC_URL = process.env.RPC_URL as string;
 const TOKEN_DECIMALS = 6;
 const SWARMS_TOKEN = process.env.NEXT_PUBLIC_SWARMS_TOKEN_MINT as string;
 
@@ -24,12 +24,10 @@ export async function POST(req: Request) {
       return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400 });
     }
 
-    const connection = new Connection(RPC_URL, {
-      commitment: 'confirmed'
-    });
+    const rpcClient = getRPCClient();
 
     // Initialize Meteora pool
-    const meteoraPool = await AmmImpl.create(connection, new PublicKey(poolAddress));
+    const meteoraPool = await AmmImpl.create(rpcClient.getConnection(), new PublicKey(poolAddress));
 
     // Convert amount to proper decimals
     const amountInBN = new BN(Math.floor(Number(amount) * Math.pow(10, TOKEN_DECIMALS)));
@@ -72,13 +70,13 @@ export async function POST(req: Request) {
     // Set fee payer
     swapTx.feePayer = new PublicKey(walletAddress);
 
-    // Get latest blockhash right before sending to user
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    // Get latest blockhash right before sending to user (HIGH priority)
+    const { blockhash, lastValidBlockHeight } = await rpcClient.getLatestBlockhash();
     swapTx.recentBlockhash = blockhash;
     swapTx.lastValidBlockHeight = lastValidBlockHeight + 150;
 
-    // Simulate transaction to check for errors
-    const simulation = await connection.simulateTransaction(swapTx);
+    // Simulate transaction to check for errors (HIGH priority)
+    const simulation = await rpcClient.simulateTransaction(swapTx);
 
     if (simulation.value.err) {
       // Check for specific error types
@@ -129,7 +127,7 @@ export async function POST(req: Request) {
     }), { status: 200 });
 
   } catch (error) {
-    console.error('Error creating swap transaction:', error);
+    logger.error('Error creating swap transaction:', error instanceof Error ? error : new Error('Unknown error'));
     return new Response(JSON.stringify({ 
       error: error instanceof Error ? error.message : "Failed to create swap transaction" 
     }), { status: 500 });
@@ -144,27 +142,29 @@ export async function PUT(req: Request) {
       return new Response(JSON.stringify({ error: "Missing signed transaction" }), { status: 400 });
     }
 
-    const connection = new Connection(RPC_URL, {
-      commitment: 'confirmed'
-    });
+    const rpcClient = getRPCClient();
 
-    // Send signed transaction immediately
+    // Send signed transaction immediately with HIGH priority
     const tx = Transaction.from(Buffer.from(signedTransaction, 'base64'));
-    const signature = await connection.sendRawTransaction(tx.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed',
-      maxRetries: 5
-    });
+    const signature = await rpcClient.sendRawTransaction(
+      tx.serialize(),
+      {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+        maxRetries: 5
+      },
+      'HIGH'
+    );
 
     logger.info("Transaction sent", { data: { signature } });
 
     try {
-      // Try to get quick confirmation
-      const latestBlockhash = await connection.getLatestBlockhash('confirmed');
-      const confirmation = await connection.confirmTransaction({
+      // Try to get quick confirmation (HIGH priority)
+      const latestBlockhash = await rpcClient.getLatestBlockhash();
+      const confirmation = await rpcClient.confirmTransaction({
         signature,
         ...latestBlockhash
-      }, 'confirmed');
+      });
 
       if (confirmation.value.err) {
         const error = new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
@@ -179,9 +179,9 @@ export async function PUT(req: Request) {
       }), { status: 200 });
 
     } catch (confirmError) {
-      // If quick confirmation fails, check transaction status
+      // If quick confirmation fails, check transaction status (MEDIUM priority)
       try {
-        const txInfo = await connection.getTransaction(signature, {
+        const txInfo = await rpcClient.getTransaction(signature, {
           commitment: 'confirmed',
           maxSupportedTransactionVersion: 0
         });
@@ -202,7 +202,7 @@ export async function PUT(req: Request) {
         }
       } catch (txCheckError) {
         logger.warn("Failed to check transaction status", {
-          error: txCheckError,
+          error: txCheckError instanceof Error ? txCheckError.message : 'Unknown error',
           context: { signature }
         });
       }
@@ -218,7 +218,7 @@ export async function PUT(req: Request) {
     }
 
   } catch (error) {
-    console.error('Error submitting swap transaction:', error);
+    logger.error('Error submitting swap transaction:', error instanceof Error ? error : new Error('Unknown error'));
     return new Response(JSON.stringify({ 
       error: error instanceof Error ? error.message : "Failed to submit/confirm transaction" 
     }), { status: 500 });
