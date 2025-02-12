@@ -546,7 +546,6 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
               <TokenStat label="Symbol" value={token.token_symbol} />
               <TokenStat label="Price" value={`$${token.price.toLocaleString(undefined, { minimumFractionDigits: 10, maximumFractionDigits: 10 })}`} />
               <TokenStat label="24h Change" value={`${token.priceChange24h.toFixed(2)}%`} />
-              <TokenStat label="Liquidity Pool" value={`$${token.liquidityPool.toLocaleString()}`} />
               
               <Separator className="my-4 bg-red-600/20" />
               

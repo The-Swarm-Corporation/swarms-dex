@@ -72,7 +72,7 @@ export async function GET(
         responseData = {
           price: stats.price,
           volume24h: stats.volume24h,
-          market_cap: agent?.market_cap || stats.volume24h, // Use agent's market cap if available
+          market_cap: agent?.market_cap || 0, // Only use agent's market cap or 0, never use volume
           price_change_24h: stats.price_change_24h || 0
         };
       }

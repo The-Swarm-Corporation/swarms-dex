@@ -84,6 +84,7 @@ async function getMarketData(tokenMint: PublicKey, swarmsMint: PublicKey) {
 
     try {
       const connection = rpcClient.getConnection()
+      
       const poolKey = deriveCustomizablePermissionlessConstantProductPoolAddress(
         tokenMint,
         swarmsMint,
@@ -121,17 +122,17 @@ async function getMarketData(tokenMint: PublicKey, swarmsMint: PublicKey) {
       const tokenVaultAddress = isTokenVaultA ? pool.aVault.toString() : pool.bVault.toString()
       const swarmsVaultAddress = isTokenVaultA ? pool.bVault.toString() : pool.aVault.toString()
 
-      logger.info("Pool vaults identified", {
-        poolAddress: poolKey.toString(),
-        tokenVaultAddress,
-        swarmsVaultAddress,
-        tokenVaultLp: isTokenVaultA ? pool.aVaultLp.toString() : pool.bVaultLp.toString(),
-        swarmsVaultLp: isTokenVaultA ? pool.bVaultLp.toString() : pool.aVaultLp.toString(),
-        isTokenVaultA,
-        tokenMint: tokenMint.toString(),
-        swarmsMint: swarmsMint.toString(),
-        poolTokenAMint: pool.tokenAMint.toString(),
-        poolTokenBMint: pool.tokenBMint.toString()
+      // Get total supply for market cap calculation
+      const mintInfo = await rpcClient.getParsedAccountInfo(tokenMint, 'LOW')
+      const totalSupply = mintInfo.value && 'parsed' in mintInfo.value.data 
+        ? Number(mintInfo.value.data.parsed.info.supply) / Math.pow(10, mintInfo.value.data.parsed.info.decimals)
+        : 0
+
+      logger.info("Supply info", {
+        mintAddress: tokenMint.toString(),
+        totalSupply,
+        poolLiquidity: tokenBalance,
+        decimals: mintInfo.value && 'parsed' in mintInfo.value.data ? mintInfo.value.data.parsed.info.decimals : 0
       })
 
       // Calculate price in the same format as Meteora's swap price
@@ -241,10 +242,22 @@ async function getMarketData(tokenMint: PublicKey, swarmsMint: PublicKey) {
           price: tokenPrice,
           priceInSwarms,
           volume24h,
-          apy
+          apy,
+          totalSupply,
+          poolLiquidity: tokenBalance,
+          marketCap: totalSupply * tokenPrice // Calculate market cap using total supply
         },
         transactions: transactions // Return raw transaction prices in SWARMS
       }
+
+      logger.info("Market data calculation details", {
+        mintAddress: tokenMint.toString(),
+        price: tokenPrice,
+        totalSupply,
+        poolLiquidity: tokenBalance,
+        marketCap: totalSupply * tokenPrice,
+        calculation: `Market Cap = ${totalSupply} * ${tokenPrice}`
+      })
 
       // Update cache
       const cacheUpdate = await supabase
@@ -532,7 +545,8 @@ export async function GET(
         .from('web3agents')
         .update({
           current_price: marketData.stats.price,
-          market_cap: marketData.stats.volume24h,
+          current_supply: marketData.stats.totalSupply,
+          market_cap: marketData.stats.marketCap,
           volume_24h: marketData.stats.volume24h,
           pool_address: marketData.pool.address,
           updated_at: new Date().toISOString()
