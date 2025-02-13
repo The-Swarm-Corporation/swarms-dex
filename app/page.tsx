@@ -11,7 +11,6 @@ import type { Web3Agent } from "@/lib/supabase/types"
 import { logger } from "@/lib/logger"
 import { useDebounce } from "@/hooks/use-debounce"
 import { SearchBar } from "@/components/search-bar"
-import { toast } from "sonner"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 

@@ -4,15 +4,14 @@ import { Button } from "@/components/ui/button"
 import { Coins, PlusCircle } from 'lucide-react'
 import Link from "next/link"
 import { WalletButton } from './wallet-button'
-import { HoldingsDialog } from './holdings-dialog'
 import { Twitter, DiscIcon as Discord, Send } from 'lucide-react'
+import TokenTicker from "./nasdaq-banner"
 
 const SOCIALS = {
-  twitter: 'https://twitter.com/swarms',
-  discord: 'https://discord.gg/swarms',
+  twitter: 'https://twitter.com/swarms_corp',
+  discord: 'https://discord.gg/aHzZttGr',
   telegram: 'https://t.me/swarmsgroupchat'
 }
-// ... existing code ...
 
 export function NavBar() {
   return (
