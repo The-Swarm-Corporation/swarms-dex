@@ -6,14 +6,12 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { TokenTrading } from "@/lib/solana/trading"
-import { MeteoraService } from "@/lib/meteora/service"
 import { useSolana } from "@/hooks/use-solana"
 import { useAuth } from "@/components/providers/auth-provider"
 import { toast } from "sonner"
 import { PublicKey } from "@solana/web3.js"
 import { logger } from "@/lib/logger"
-import { Loader2, Info } from "lucide-react"
+import { Loader2 } from "lucide-react"
 import { logActivity } from "@/lib/supabase/logging"
 import { MAX_SLIPPAGE_PERCENT } from "@/lib/meteora/constants"
 import { ComputeBudgetProgram } from "@solana/web3.js"
@@ -65,9 +63,6 @@ export function TokenTradingPanel({
   const [estimatedCost, setEstimatedCost] = useState(0)
   const [slippage, setSlippage] = useState(MAX_SLIPPAGE_PERCENT)
   const [gasFee, setGasFee] = useState(0.00005) // Default SOL gas fee
-  const [trading, setTrading] = useState<TokenTrading | null>(null)
-  const [meteoraService, setMeteoraService] = useState<MeteoraService | null>(null)
-  const [pool, setPool] = useState<{ address: PublicKey } | null>(null)
   const [currentPoolAddress, setCurrentPoolAddress] = useState<string | null>(initialPoolAddress || null)
   const [showPoolModal, setShowPoolModal] = useState(false)
   const [additionalSwarms, setAdditionalSwarms] = useState('0')
@@ -77,65 +72,10 @@ export function TokenTradingPanel({
     height: typeof window !== 'undefined' ? window.innerHeight : 0
   })
 
+  // Update currentPrice when initialPrice changes
   useEffect(() => {
-    if (connection) {
-      setTrading(new TokenTrading(connection))
-      setMeteoraService(new MeteoraService(connection))
-    }
-  }, [connection])
-
-  // Initialize Meteora pool
-  useEffect(() => {
-    const initPool = async () => {
-      if (!meteoraService || !swapsTokenAddress || !currentPoolAddress) return
-
-      try {
-        const tokenMint = new PublicKey(mintAddress)
-        const swapsMint = new PublicKey(swapsTokenAddress)
-        const poolPublicKey = new PublicKey(currentPoolAddress)
-        const pool = await meteoraService.getPool(poolPublicKey)
-
-        if (pool) {
-          setPool(pool)
-          logger.info("Found Meteora pool", {
-            pool: pool.address.toString(),
-            tokenA: pool.tokenAMint.toString(),
-            tokenB: pool.tokenBMint.toString(),
-          })
-        }
-      } catch (error) {
-        logger.error("Failed to initialize Meteora pool", error as Error)
-      }
-    }
-
-    initPool()
-  }, [meteoraService, mintAddress, swapsTokenAddress, currentPoolAddress])
-
-  useEffect(() => {
-    let interval: NodeJS.Timeout
-
-    const updatePrice = async () => {
-      if (trading) {
-        try {
-          const price = await trading.getCurrentPrice(mintAddress)
-          setCurrentPrice(price)
-        } catch (error) {
-          logger.error("Failed to update price", error as Error)
-        }
-      }
-    }
-
-    if (trading) {
-      interval = setInterval(updatePrice, 10000)
-      updatePrice()
-    }
-
-    return () => {
-      if (interval) {
-        clearInterval(interval)
-      }
-    }
-  }, [trading, mintAddress])
+    setCurrentPrice(initialPrice)
+  }, [initialPrice])
 
   const handleSlippageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = parseFloat(e.target.value)
@@ -609,8 +549,6 @@ export function TokenTradingPanel({
 
           // Update local state
           setCurrentPoolAddress(poolAddress);
-          setPool({ address: new PublicKey(poolAddress) });
-          setAdditionalSwarms('0');
           setAmount('');
           setShowPoolModal(false);
           
