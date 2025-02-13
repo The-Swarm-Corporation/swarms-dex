@@ -304,8 +304,8 @@ async function getRecentTransactions(
   if (!cacheError && cachedTransactions) {
     existingTransactions = cachedTransactions.map(tx => ({
       signature: tx.signature,
-      price: tx.price || 0,
-      size: tx.size || 0,
+      price: tx.price,
+      size: tx.size,
       side: tx.side as 'buy' | 'sell',
       timestamp: tx.timestamp
     })).filter(tx => tx.price && tx.size) // Only include valid transactions
@@ -473,7 +473,7 @@ export async function GET(
 ) {
   try {
     const mintAddress = params.walletaddress
-    if (!mintAddress || mintAddress === 'undefined') {
+    if (!mintAddress) {
       logger.error("Invalid mint address provided", new Error("Invalid mint address"))
       return NextResponse.json({ error: "Valid mint address is required" }, { status: 400 })
     }

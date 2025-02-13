@@ -333,9 +333,9 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
         token_symbol: data.token_symbol,
         name: data.name,
         description: data.description,
-        price: data.market?.stats?.price || 0,
+        price: data.market?.stats?.price,
         priceChange24h: calculatePriceChange24h(data.market?.transactions || []),
-        liquidityPool: data.market_cap || 0,
+        liquidityPool: data.market_cap,
         poolAddress: data.pool_address,
         creator_wallet: data.creator?.wallet_address || '',
         metadata: data.metadata,
@@ -344,7 +344,7 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
         market: data.market ? {
           stats: {
             ...(data.market.stats || {}),
-            marketCap: data.market_cap || 0
+            marketCap: data.market_cap
           },
           transactions: data.market.transactions || []
         } : null,
