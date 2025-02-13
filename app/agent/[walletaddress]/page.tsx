@@ -18,6 +18,7 @@ import { TokenHolders } from '@/components/token-holders'
 import { ShareModal } from '@/components/share-modal'
 import { Button } from '@/components/ui/button'
 import type { Web3Agent } from "@/lib/supabase/types"
+import { Comments } from '@/components/comments'
 
 interface TokenDetails {
   mint_address: string
@@ -66,6 +67,20 @@ interface TokenDetails {
   updated_at: string
   initial_supply: number
   liquidity_pool_size: number
+  comments?: Array<{
+    id: string
+    content: string
+    created_at: string
+    updated_at: string
+    is_edited: boolean
+    user: {
+      id: string
+      username: string | null
+      wallet_address: string
+      avatar_url: string | null
+    }
+    parent_id: string | null
+  }>
 }
 
 interface TokenStatProps {
@@ -269,18 +284,19 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
         setUpdating(true)
       }
 
-      const response = await fetch(`/api/agent/${params.walletaddress}`, {
+      // First get the agent data
+      const agentResponse = await fetch(`/api/agent/${params.walletaddress}`, {
         headers: {
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache'
         }
       })
       
-      if (!response.ok) {
+      if (!agentResponse.ok) {
         throw new Error('Failed to fetch token data')
       }
 
-      const data = await response.json()
+      const data = await agentResponse.json()
       
       if (!data) {
         toast.error('Token not found')
@@ -288,6 +304,10 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
         return
       }
 
+      // Then fetch comments using the agent's ID
+      const commentsResponse = await fetch(`/api/comments?agent_id=${data.id}`)
+      const comments = commentsResponse.ok ? await commentsResponse.json() : []
+      
       const tokenDetails: TokenDetails = {
         mint_address: data.mint_address,
         token_symbol: data.token_symbol,
@@ -324,7 +344,8 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
         current_price: data.current_price,
         updated_at: data.updated_at,
         initial_supply: data.initial_supply,
-        liquidity_pool_size: data.liquidity_pool_size
+        liquidity_pool_size: data.liquidity_pool_size,
+        comments: comments
       }
       
       setToken(prev => {
@@ -335,12 +356,12 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
             ...prev,
             // Only update non-critical fields during trading
             ...(isTrading ? {} : {
-            price: tokenDetails.price,
-            priceChange24h: tokenDetails.priceChange24h,
-            liquidityPool: tokenDetails.liquidityPool,
+              price: tokenDetails.price,
+              priceChange24h: tokenDetails.priceChange24h,
+              liquidityPool: tokenDetails.liquidityPool,
               market: tokenDetails.market ? {
                 stats: tokenDetails.market.stats,
-              transactions: [
+                transactions: [
                   ...(prev.market?.transactions || []),
                   ...(tokenDetails.market.transactions || [])
                     .filter(tx => 
@@ -348,7 +369,8 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
                         .some(prevTx => prevTx.signature === tx.signature)
                     )
                 ]
-              } : prev.market
+              } : prev.market,
+              comments: comments
             })
           }
         }
@@ -531,6 +553,15 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
               transactions={token.market?.transactions || []}
             />
           </div>
+
+          {/* Comments Section */}
+          <Comments 
+            agentId={token.id}
+            comments={token.comments || []}
+            onCommentAdded={() => fetchData(true)}
+            onCommentUpdated={() => fetchData(true)}
+            onCommentDeleted={() => fetchData(true)}
+          />
         </div>
 
         {/* Sidebar */}
