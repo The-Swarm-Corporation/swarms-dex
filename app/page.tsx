@@ -13,6 +13,14 @@ import { useDebounce } from "@/hooks/use-debounce"
 import { SearchBar } from "@/components/search-bar"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { 
+  Pagination, 
+  PaginationContent, 
+  PaginationItem, 
+  PaginationLink, 
+  PaginationNext, 
+  PaginationPrevious 
+} from "@/components/ui/pagination"
 
 function ShareModal({ 
   isOpen, 
@@ -307,8 +315,11 @@ export default function Home() {
   const [trendingTokens, setTrendingTokens] = useState<Web3Agent[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
   const debouncedSearch = useDebounce(searchQuery, 300)
 
+  const TOKENS_PER_PAGE = 20
+  
   useEffect(() => {
     const fetchTrendingTokens = async () => {
       try {
@@ -375,8 +386,80 @@ export default function Home() {
     fetchTokens()
   }, [debouncedSearch])
 
+  const paginateTokens = (tokenList: Web3Agent[]) => {
+    const startIndex = (currentPage - 1) * TOKENS_PER_PAGE
+    const endIndex = startIndex + TOKENS_PER_PAGE
+    return tokenList.slice(startIndex, endIndex)
+  }
+
+  const renderPagination = (totalItems: number) => {
+    const totalPages = Math.ceil(totalItems / TOKENS_PER_PAGE)
+    if (totalPages <= 1) return null
+
+    const getPageNumbers = () => {
+      const pages = []
+      for (let i = 1; i <= totalPages; i++) {
+        if (
+          i === 1 ||
+          i === totalPages ||
+          (i >= currentPage - 2 && i <= currentPage + 2)
+        ) {
+          pages.push(i)
+        } else if (i === currentPage - 3 || i === currentPage + 3) {
+          pages.push('...')
+        }
+      }
+      return pages
+    }
+
+    return (
+      <Pagination className="mt-8">
+        <PaginationContent>
+          <PaginationItem>
+            <PaginationPrevious
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              className={currentPage === 1 ? "pointer-events-none opacity-50" : ""}
+            />
+          </PaginationItem>
+          
+          {getPageNumbers().map((page, idx) => (
+            <PaginationItem key={idx}>
+              {page === '...' ? (
+                <PaginationLink className="pointer-events-none">...</PaginationLink>
+              ) : (
+                <PaginationLink
+                  onClick={() => setCurrentPage(page as number)}
+                  isActive={currentPage === page}
+                  className={currentPage === page ? "bg-red-500 text-white hover:bg-red-600" : ""}
+                >
+                  {page}
+                </PaginationLink>
+              )}
+            </PaginationItem>
+          ))}
+
+          <PaginationItem>
+            <PaginationNext
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              className={currentPage === totalPages ? "pointer-events-none opacity-50" : ""}
+            />
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    )
+  }
+
+  // Reset pagination when search changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [debouncedSearch])
+
   const agents = tokens.filter((token) => !token.is_swarm)
   const swarms = tokens.filter((token) => token.is_swarm)
+
+  const paginatedTokens = paginateTokens(tokens)
+  const paginatedAgents = paginateTokens(agents)
+  const paginatedSwarms = paginateTokens(swarms)
 
   return (
     <div className="space-y-8">
@@ -441,11 +524,14 @@ export default function Home() {
             <>
               <TabsContent value="all" className="mt-6">
                 {tokens.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {tokens.map((token) => (
-                      <TokenCard key={token.id} token={token} />
-                    ))}
-                  </div>
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {paginatedTokens.map((token) => (
+                        <TokenCard key={token.id} token={token} />
+                      ))}
+                    </div>
+                    {renderPagination(tokens.length)}
+                  </>
                 ) : (
                   <div className="text-center py-12 text-gray-400">No tokens found matching your search</div>
                 )}
@@ -453,11 +539,14 @@ export default function Home() {
 
               <TabsContent value="agents" className="mt-6">
                 {agents.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {agents.map((token) => (
-                      <TokenCard key={token.id} token={token} />
-                    ))}
-                  </div>
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {paginatedAgents.map((token) => (
+                        <TokenCard key={token.id} token={token} />
+                      ))}
+                    </div>
+                    {renderPagination(agents.length)}
+                  </>
                 ) : (
                   <div className="text-center py-12 text-gray-400">No agents found matching your search</div>
                 )}
@@ -465,11 +554,14 @@ export default function Home() {
 
               <TabsContent value="swarms" className="mt-6">
                 {swarms.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {swarms.map((token) => (
-                      <TokenCard key={token.id} token={token} />
-                    ))}
-                  </div>
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {paginatedSwarms.map((token) => (
+                        <TokenCard key={token.id} token={token} />
+                      ))}
+                    </div>
+                    {renderPagination(swarms.length)}
+                  </>
                 ) : (
                   <div className="text-center py-12 text-gray-400">No swarms found matching your search</div>
                 )}

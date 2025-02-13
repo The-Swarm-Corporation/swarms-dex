@@ -50,6 +50,7 @@ interface TokenDetails {
   discord_server?: string
   current_supply?: number
   imageUrl?: string
+  created_at?: string
 }
 
 interface TokenStatProps {
@@ -65,18 +66,6 @@ const TokenStat = ({ label, value, className }: TokenStatProps) => (
   </div>
 )
 
-
-// lib/geckoTerminal.ts
-
-export interface TokenPriceData {
-  data: Array<{
-    id: string;
-    type: string;
-    attributes: {
-      token_prices: Record<string, string>;
-    };
-  }>;
-}
 
 export interface APIErrorResponse {
   errors: Array<{
@@ -99,51 +88,6 @@ interface GetTokenPricesParams {
  * @returns A promise that resolves with the token price data.
  * @throws An error if the request fails or if more than 30 addresses are provided.
  */
-export async function getTokenPrices({
-  network,
-  addresses,
-  includeMarketCap = false,
-  include24hrVol = false,
-}: GetTokenPricesParams): Promise<TokenPriceData> {
-  // Validate addresses count
-  if (addresses.length > 30) {
-    throw new Error('Exceeded maximum number of addresses. Maximum allowed is 30.');
-  }
-
-  const baseUrl = 'https://api.geckoterminal.com/api/v2';
-  // Create endpoint by joining token addresses with commas (after URL-encoding each address)
-  const encodedAddresses = addresses.map((addr) => encodeURIComponent(addr)).join(',');
-  const endpoint = `/simple/networks/${encodeURIComponent(network)}/token_price/${encodedAddresses}`;
-
-  // Build query parameters for optional data
-  const queryParams = new URLSearchParams();
-  queryParams.append('include_market_cap', includeMarketCap.toString());
-  queryParams.append('include_24hr_vol', include24hrVol.toString());
-
-  const url = `${baseUrl}${endpoint}?${queryParams.toString()}`;
-
-  // Fetch data from the API
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      // Set the Accept header with the specified API version.
-      Accept: 'application/json;version=20230302',
-    },
-  });
-
-  // Check for HTTP errors
-  if (!response.ok) {
-    // Attempt to parse the error response
-    const errorResponse: APIErrorResponse = await response.json();
-    const errorMessages = errorResponse.errors.map((err) => err.title).join(', ');
-    throw new Error(`API Error: ${errorMessages}`);
-  }
-
-  // Parse and return the JSON data
-  const data: TokenPriceData = await response.json();
-  return data;
-}
-
 function transformTransactionsToOHLCV(transactions: Array<{
   signature: string
   price: number // This is price in SWARMS
@@ -352,7 +296,8 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
         telegram_group: data.telegram_group,
         discord_server: data.discord_server,
         current_supply: data.current_supply,
-        imageUrl: data.image_url
+        imageUrl: data.image_url,
+        created_at: data.created_at
       }
       
       setToken(prev => {
@@ -570,6 +515,16 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
               <TokenStat label="Symbol" value={token.token_symbol} />
               <TokenStat label="Price" value={`$${token.price.toLocaleString(undefined, { minimumFractionDigits: 10, maximumFractionDigits: 10 })}`} />
               <TokenStat label="24h Change" value={`${token.priceChange24h.toFixed(2)}%`} />
+              {token.created_at && (
+                <TokenStat 
+                  label="Created" 
+                  value={new Date(token.created_at).toLocaleDateString(undefined, { 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric' 
+                  })} 
+                />
+              )}
               
               <Separator className="my-4 bg-red-600/20" />
               
