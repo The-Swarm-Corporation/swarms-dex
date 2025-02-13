@@ -7,7 +7,7 @@ import { OrderBook } from '@/components/order-book'
 import { MarketStats } from '@/components/market-stats'
 import { TradingViewChart } from '@/components/trading-view-chart'
 import { TokenTradingPanel } from '@/components/token-trading-panel'
-import { Bot, Users, ArrowLeft, Loader2, ExternalLink, Info } from 'lucide-react'
+import { Bot, Users, ArrowLeft, Loader2, ExternalLink, Info, Share2 } from 'lucide-react'
 import { MarketService, MarketData } from '@/lib/market'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -15,6 +15,9 @@ import { useAuth } from '@/components/providers/auth-provider'
 import { toast } from 'sonner'
 import { Separator } from "@/components/ui/separator"
 import { TokenHolders } from '@/components/token-holders'
+import { ShareModal } from '@/components/share-modal'
+import { Button } from '@/components/ui/button'
+import type { Web3Agent } from "@/lib/supabase/types"
 
 interface TokenDetails {
   mint_address: string
@@ -49,8 +52,20 @@ interface TokenDetails {
   telegram_group?: string
   discord_server?: string
   current_supply?: number
-  imageUrl?: string
+  image_url?: string
   created_at?: string
+  // Required Web3Agent properties
+  id: string
+  creator_id: string
+  volume24h: number
+  volume_24h: number
+  pool_address: string | null
+  is_verified: boolean
+  market_cap: number
+  current_price: number
+  updated_at: string
+  initial_supply: number
+  liquidity_pool_size: number
 }
 
 interface TokenStatProps {
@@ -204,6 +219,7 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [shareModalOpen, setShareModalOpen] = useState(false)
   const fetchTimeoutRef = useRef<NodeJS.Timeout>()
   const lastFetchRef = useRef<number>(0)
   const [isTrading, setIsTrading] = useState(false)
@@ -296,8 +312,19 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
         telegram_group: data.telegram_group,
         discord_server: data.discord_server,
         current_supply: data.current_supply,
-        imageUrl: data.image_url,
-        created_at: data.created_at
+        image_url: data.image_url,
+        created_at: data.created_at,
+        id: data.id,
+        creator_id: data.creator_id,
+        volume24h: data.volume_24h,
+        volume_24h: data.volume_24h,
+        pool_address: data.pool_address,
+        is_verified: data.is_verified,
+        market_cap: data.market_cap,
+        current_price: data.current_price,
+        updated_at: data.updated_at,
+        initial_supply: data.initial_supply,
+        liquidity_pool_size: data.liquidity_pool_size
       }
       
       setToken(prev => {
@@ -419,13 +446,15 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
           Updating...
         </div>
       )}
-      <Link 
-        href="/" 
-        className="inline-flex items-center text-gray-400 hover:text-red-500 transition-colors text-sm sm:text-base"
-      >
-        <ArrowLeft className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
-        Back to Market
-      </Link>
+      <div className="flex items-center justify-between">
+        <Link 
+          href="/" 
+          className="inline-flex items-center text-gray-400 hover:text-red-500 transition-colors text-sm sm:text-base"
+        >
+          <ArrowLeft className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+          Back to Market
+        </Link>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr,400px] gap-4 sm:gap-6">
         <div className="space-y-4 sm:space-y-6">
@@ -435,9 +464,9 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0">
                 <div className="space-y-1 w-full sm:w-auto">
                   <CardTitle className="text-xl sm:text-2xl font-bold text-red-600 flex items-center gap-2 flex-wrap">
-                    {token.imageUrl && (
+                    {token.image_url && (
                       <img 
-                        src={token.imageUrl} 
+                        src={token.image_url} 
                         alt={`${token.name} logo`}
                         className="w-6 h-6 sm:w-8 sm:h-8 rounded-lg bg-black/20"
                       />
@@ -592,6 +621,18 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
                   </div>
                 </>
               )}
+
+              {/* Share Button */}
+              <Separator className="my-4 bg-red-600/20" />
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={() => setShareModalOpen(true)}
+                className="w-full text-gray-400 hover:text-red-500 hover:bg-red-500/10 border-red-600/20"
+              >
+                <Share2 className="h-4 w-4 mr-2" />
+                Share {token.name}
+              </Button>
             </CardContent>
           </Card>
 
@@ -620,6 +661,37 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
           />
         </div>
       </div>
+
+      {token && (
+        <ShareModal 
+          isOpen={shareModalOpen}
+          onClose={() => setShareModalOpen(false)}
+          token={{
+            id: token.id,
+            creator_id: token.creator_id,
+            mint_address: token.mint_address,
+            name: token.name,
+            description: token.description,
+            token_symbol: token.token_symbol,
+            image_url: token.image_url,
+            volume24h: token.volume24h,
+            volume_24h: token.volume_24h,
+            pool_address: token.pool_address,
+            is_verified: token.is_verified,
+            is_swarm: token.is_swarm || false,
+            market_cap: token.market_cap,
+            current_price: token.current_price,
+            updated_at: token.updated_at,
+            initial_supply: token.initial_supply,
+            liquidity_pool_size: token.liquidity_pool_size,
+            twitter_handle: token.twitter_handle,
+            telegram_group: token.telegram_group,
+            discord_server: token.discord_server,
+            current_supply: token.current_supply,
+            created_at: token.created_at
+          } as Web3Agent}
+        />
+      )}
     </div>
   )
 }
