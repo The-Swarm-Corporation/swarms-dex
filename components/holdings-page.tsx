@@ -183,10 +183,10 @@ const TokenGallery: React.FC = () => {
                         <img 
                           src={token.imageUrl} 
                           alt={token.symbol}
-                          className="w-8 h-8 rounded-full"
+                          className="w-8 h-8 rounded-lg"
                         />
                       ) : (
-                        <div className="w-8 h-8 rounded-full bg-red-600/20" />
+                        <div className="w-8 h-8 rounded-lg bg-red-600/20" />
                       )}
                       <span className="text-red-500 font-bold text-xl">
                         {token.symbol}

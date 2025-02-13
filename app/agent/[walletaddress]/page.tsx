@@ -49,6 +49,7 @@ interface TokenDetails {
   telegram_group?: string
   discord_server?: string
   current_supply?: number
+  imageUrl?: string
 }
 
 interface TokenStatProps {
@@ -350,7 +351,8 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
         twitter_handle: data.twitter_handle,
         telegram_group: data.telegram_group,
         discord_server: data.discord_server,
-        current_supply: data.current_supply
+        current_supply: data.current_supply,
+        imageUrl: data.image_url
       }
       
       setToken(prev => {
@@ -489,6 +491,13 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
               <div className="flex items-center justify-between">
                 <div className="space-y-1">
                   <CardTitle className="text-2xl font-bold text-red-600 flex items-center gap-2">
+                    {token.imageUrl && (
+                      <img 
+                        src={token.imageUrl} 
+                        alt={`${token.name} logo`}
+                        className="w-8 h-8 rounded-lg bg-black/20"
+                      />
+                    )}
                     {token.name}
                     {token.is_swarm ? (
                       <Users className="h-5 w-5" />

@@ -218,10 +218,10 @@ export function HoldingsDialog() {
                             <img 
                               src={token.imageUrl} 
                               alt={token.symbol}
-                              className="w-6 h-6 rounded-full"
+                              className="w-6 h-6 rounded-lg"
                             />
                           ) : (
-                            <div className="w-6 h-6 rounded-full bg-red-600/20" />
+                            <div className="w-6 h-6 rounded-lg bg-red-600/20" />
                           )}
                           {token.symbol}
                           <Link

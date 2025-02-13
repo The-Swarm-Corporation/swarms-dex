@@ -57,7 +57,7 @@ function TokenCard({ token }: { token: Web3Agent & {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               {token.image_url && (
-                <div className="w-12 h-12 rounded-full overflow-hidden bg-black/20">
+                <div className="w-12 h-12 rounded-lg overflow-hidden bg-black/20">
                   <img 
                     src={token.image_url} 
                     alt={`${token.name} logo`}
