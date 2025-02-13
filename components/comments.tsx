@@ -214,7 +214,16 @@ export function Comments({ agentId, comments, onCommentAdded, onCommentUpdated, 
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="font-medium">
-                  {comment.user.username || comment.user.wallet_address.slice(0, 8)}
+                  {comment.user.username || (
+                    <a
+                      href={`https://solscan.io/account/${comment.user.wallet_address}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-red-500 hover:text-red-400"
+                    >
+                      {comment.user.wallet_address.slice(0, 8)}
+                    </a>
+                  )}
                 </span>
                 <span className="text-xs text-gray-400">
                   {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true })}
