@@ -235,6 +235,7 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
   const [updating, setUpdating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [shareModalOpen, setShareModalOpen] = useState(false)
+  const [holdersCount, setHoldersCount] = useState<number>(0)
   const fetchTimeoutRef = useRef<NodeJS.Timeout>()
   const lastFetchRef = useRef<number>(0)
   const [isTrading, setIsTrading] = useState(false)
@@ -376,6 +377,13 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
         }
         return tokenDetails
       })
+
+      // Fetch holders count
+      const holdersResponse = await fetch(`/api/tokens/${params.walletaddress}/holders`)
+      if (holdersResponse.ok) {
+        const holders = await holdersResponse.json()
+        setHoldersCount(holders.length)
+      }
     } catch (error) {
       console.error('Failed to fetch token data:', error)
       if (!isUpdate) {
@@ -574,6 +582,7 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
             </CardHeader>
             <CardContent className="space-y-4 p-3 sm:p-6">
               <TokenStat label="Symbol" value={token.token_symbol} />
+              <TokenStat label="Holders" value={holdersCount.toLocaleString()} />
               {token.created_at && (
                 <TokenStat 
                   label="Created" 
