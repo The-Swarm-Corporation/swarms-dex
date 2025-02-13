@@ -137,17 +137,17 @@ const TokenGallery: React.FC = () => {
 
       {/* Currency Summary */}
       {!loading && holdings.length > 0 && (
-        <div className="mb-8 p-6 rounded-xl bg-gradient-to-r from-red-600/10 to-red-900/10 border border-red-600/30">
-          <div className="flex justify-between items-center">
-            <div className="space-y-1">
+        <div className="mb-8 p-4 sm:p-6 rounded-xl bg-gradient-to-r from-red-600/10 to-red-900/10 border border-red-600/30">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="space-y-1 w-full sm:w-auto">
               <h2 className="text-xl font-bold text-red-500">Portfolio Value</h2>
-              <p className="text-3xl font-bold text-white">
+              <p className="text-2xl sm:text-3xl font-bold text-white">
                 ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
             </div>
-            <div className="flex gap-6">
+            <div className="flex flex-wrap gap-4 sm:gap-6 w-full sm:w-auto">
               {currencies.map((currency) => (
-                <div key={currency.symbol} className="text-right">
+                <div key={currency.symbol} className="text-left sm:text-right flex-1 sm:flex-none">
                   <p className="text-sm text-gray-400">{currency.symbol}</p>
                   <p className="text-lg font-mono text-white">
                     {currency.uiAmount.toLocaleString(undefined, {
@@ -166,15 +166,16 @@ const TokenGallery: React.FC = () => {
 
       {/* Agent Tokens Grid */}
       {!loading && agentTokens.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
           {agentTokens
             .sort((a, b) => b.value - a.value)
             .map((token) => (
               <div
                 key={token.mintAddress}
-                className="bg-black rounded-xl p-6 transform transition 
-                         hover:scale-105 border border-red-600/50 
-                         shadow-lg hover:shadow-red-600/30"
+                className="bg-gradient-to-br from-black to-red-950/10 rounded-xl p-4 sm:p-6 
+                         transform transition-all duration-200 ease-in-out
+                         hover:scale-[1.02] border border-red-600/30 
+                         hover:border-red-600/50 hover:shadow-lg hover:shadow-red-600/20"
               >
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex flex-col">
@@ -183,25 +184,25 @@ const TokenGallery: React.FC = () => {
                         <img 
                           src={token.imageUrl} 
                           alt={token.symbol}
-                          className="w-8 h-8 rounded-lg"
+                          className="w-8 h-8 rounded-lg object-cover"
                         />
                       ) : (
                         <div className="w-8 h-8 rounded-lg bg-red-600/20" />
                       )}
-                      <span className="text-red-500 font-bold text-xl">
+                      <span className="text-red-500 font-bold text-lg sm:text-xl truncate max-w-[120px]">
                         {token.symbol}
                       </span>
                       <Link
                         href={`/agent/${token.mintAddress}`}
-                        className="text-gray-400 hover:text-red-500 transition-colors"
+                        className="text-gray-400 hover:text-red-500 transition-colors p-1 hover:bg-red-500/10 rounded-full"
                       >
                         <ExternalLink className="h-4 w-4" />
                       </Link>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-red-400 text-sm">Balance</p>
-                    <p className="text-white font-bold text-lg">
+                    <p className="text-red-400 text-xs sm:text-sm">Balance</p>
+                    <p className="text-white font-bold text-base sm:text-lg">
                       {token.uiAmount.toLocaleString(undefined, {
                         maximumFractionDigits: token.decimals,
                       })}
@@ -211,15 +212,15 @@ const TokenGallery: React.FC = () => {
                 <div className="mt-4 pt-4 border-t border-red-900/30">
                   <div className="flex justify-between items-center">
                     <div>
-                      <p className="text-gray-600 text-sm">Value</p>
-                      <p className="text-red-300 font-mono">
+                      <p className="text-gray-600 text-xs sm:text-sm">Value</p>
+                      <p className="text-red-300 font-mono text-sm sm:text-base">
                         ${token.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-gray-600 text-sm">Price</p>
-                      <p className="text-red-300 font-mono">
-                        ${token.currentPrice.toFixed(11)}
+                      <p className="text-gray-600 text-xs sm:text-sm">Price</p>
+                      <p className="text-red-300 font-mono text-sm sm:text-base">
+                        ${token.currentPrice.toFixed(4)}
                       </p>
                     </div>
                   </div>
@@ -228,9 +229,9 @@ const TokenGallery: React.FC = () => {
             ))}
         </div>
       ) : !loading && (
-        <div className="text-center py-20 border border-red-900/30 rounded-xl bg-black">
-          <p className="text-red-500 text-xl">No AI agents currently owned</p>
-          <p className="text-gray-600 mt-2">Purchase agent tokens to get started</p>
+        <div className="text-center py-12 sm:py-20 border border-red-900/30 rounded-xl bg-black">
+          <p className="text-red-500 text-lg sm:text-xl">No AI agents currently owned</p>
+          <p className="text-gray-600 mt-2 text-sm sm:text-base">Purchase agent tokens to get started</p>
         </div>
       )}
     </div>

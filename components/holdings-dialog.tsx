@@ -150,22 +150,22 @@ export function HoldingsDialog() {
         </Button>
       </DialogTrigger>
 
-      <DialogContent className="bg-black/95 border-red-600/20">
+      <DialogContent className="bg-black/95 border-red-600/20 sm:max-w-2xl">
         <DialogHeader>
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
             <DialogTitle className="text-red-600">Wallet Holdings</DialogTitle>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
               <Button
                 variant="ghost"
                 size="sm"
-                className="text-red-600 hover:text-red-500"
+                className="text-red-600 hover:text-red-500 w-full sm:w-auto"
                 onClick={fetchHoldings}
                 disabled={loading || !isAuthenticated}
               >
                 <Coins className="h-4 w-4 mr-1" />
                 Refresh
               </Button>
-              <div className="flex items-center gap-3 text-xs text-gray-400">
+              <div className="flex flex-wrap items-center gap-3 text-xs text-gray-400 w-full sm:w-auto">
                 {currencies.map((currency) => (
                   <div key={currency.symbol} className="flex items-center gap-1">
                     <span>{currency.symbol}</span>
@@ -176,7 +176,7 @@ export function HoldingsDialog() {
                     </span>
                   </div>
                 ))}
-                <div className="border-l border-red-600/20 pl-3">
+                <div className="border-l border-red-600/20 pl-3 ml-auto">
                   <span className="font-mono">${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
               </div>
@@ -184,7 +184,7 @@ export function HoldingsDialog() {
           </div>
           <DialogDescription>View your AI agent holdings</DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
           {error ? (
             <div className="text-center text-red-500 py-4 space-y-2">
               <div>{error}</div>
@@ -210,41 +210,44 @@ export function HoldingsDialog() {
                   .map((token) => (
                     <div
                       key={`${token.mintAddress}-${token.symbol}`}
-                      className="flex justify-between items-center p-4 rounded-lg bg-gradient-to-r from-red-600/20 to-red-900/20 border border-red-600/30 hover:border-red-600/50 transition-colors"
+                      className="flex justify-between items-center p-3 sm:p-4 rounded-lg 
+                               bg-gradient-to-r from-red-600/20 to-red-900/20 
+                               border border-red-600/30 hover:border-red-600/50 
+                               transition-all duration-200 ease-in-out hover:shadow-lg hover:shadow-red-600/20"
                     >
                       <div className="space-y-1.5">
-                        <div className="font-bold text-lg flex items-center gap-2">
+                        <div className="font-bold text-base sm:text-lg flex items-center gap-2">
                           {token.imageUrl ? (
                             <img 
                               src={token.imageUrl} 
                               alt={token.symbol}
-                              className="w-6 h-6 rounded-lg"
+                              className="w-6 h-6 rounded-lg object-cover"
                             />
                           ) : (
                             <div className="w-6 h-6 rounded-lg bg-red-600/20" />
                           )}
-                          {token.symbol}
+                          <span className="truncate max-w-[120px]">{token.symbol}</span>
                           <Link
                             href={`/agent/${token.mintAddress}`}
-                            className="text-gray-400 hover:text-red-500 transition-colors"
+                            className="text-gray-400 hover:text-red-500 transition-colors p-1 hover:bg-red-500/10 rounded-full"
                           >
                             <ExternalLink className="h-4 w-4" />
                           </Link>
                         </div>
                         {token.value > 0 && (
-                          <div className="text-sm text-gray-300">
+                          <div className="text-xs sm:text-sm text-gray-300">
                             ${(token.value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </div>
                         )}
                       </div>
                       <div className="text-right">
-                        <div className="font-mono text-lg">
+                        <div className="font-mono text-base sm:text-lg">
                           {token.uiAmount.toLocaleString(undefined, {
                             maximumFractionDigits: token.decimals,
                           })}
                         </div>
                         {token.currentPrice > 0 && (
-                          <div className="text-sm text-gray-300">
+                          <div className="text-xs sm:text-sm text-gray-300">
                             ${(token.currentPrice).toFixed(4)}
                           </div>
                         )}
@@ -255,8 +258,8 @@ export function HoldingsDialog() {
             </div>
           ) : (
             <div className="text-center text-gray-400 py-8 space-y-2">
-              <div>No AI agents currently owned</div>
-              <div className="text-sm">Purchase agent tokens to get started</div>
+              <div className="text-base sm:text-lg">No AI agents currently owned</div>
+              <div className="text-xs sm:text-sm">Purchase agent tokens to get started</div>
             </div>
           )}
         </div>
