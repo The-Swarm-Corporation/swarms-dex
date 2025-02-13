@@ -19,6 +19,7 @@ import { ShareModal } from '@/components/share-modal'
 import { Button } from '@/components/ui/button'
 import type { Web3Agent } from "@/lib/supabase/types"
 import { Comments } from '@/components/comments'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 
 interface TokenDetails {
   mint_address: string
@@ -541,26 +542,42 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
             </CardContent>
           </Card>
 
-          {/* Market Stats, Order Book and Token Holders */}
+          {/* Market Stats and Trading Activity */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-            <div className="space-y-4 sm:space-y-6">
-              <MarketStats 
-                mintAddress={token.mint_address} 
-                symbol={token.token_symbol}
-                poolData={token.market?.stats || null}
-                priceChange24h={token.priceChange24h}
-              />
-              <TokenHolders
-                mintAddress={token.mint_address}
-                symbol={token.token_symbol}
-                totalSupply={token.current_supply || 0}
-              />
-            </div>
-            <OrderBook 
+            <MarketStats 
               mintAddress={token.mint_address} 
               symbol={token.token_symbol}
-              transactions={token.market?.transactions || []}
+              poolData={token.market?.stats || null}
+              priceChange24h={token.priceChange24h}
             />
+            <Card className="bg-black/50 border-red-600/20">
+              <Tabs defaultValue="trades" className="w-full">
+                <CardHeader className="p-3 sm:p-6 pb-0 sm:pb-0">
+                  <div className="flex items-center justify-between">
+                    <TabsList className="bg-black/50">
+                      <TabsTrigger value="trades" className="data-[state=active]:bg-red-600">Recent Trades</TabsTrigger>
+                      <TabsTrigger value="holders" className="data-[state=active]:bg-red-600">Top Holders</TabsTrigger>
+                    </TabsList>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-3 sm:p-6">
+                  <TabsContent value="trades" className="mt-0">
+                    <OrderBook 
+                      mintAddress={token.mint_address} 
+                      symbol={token.token_symbol}
+                      transactions={token.market?.transactions || []}
+                    />
+                  </TabsContent>
+                  <TabsContent value="holders" className="mt-0">
+                    <TokenHolders
+                      mintAddress={token.mint_address}
+                      symbol={token.token_symbol}
+                      totalSupply={token.current_supply || 0}
+                    />
+                  </TabsContent>
+                </CardContent>
+              </Tabs>
+            </Card>
           </div>
 
           {/* Comments Section */}
