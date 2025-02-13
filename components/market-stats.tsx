@@ -12,9 +12,10 @@ interface MarketStatsProps {
     apy: number
     marketCap?: number
   } | null
+  priceChange24h: number
 }
 
-export function MarketStats({ mintAddress, symbol, poolData }: MarketStatsProps) {
+export function MarketStats({ mintAddress, symbol, poolData, priceChange24h }: MarketStatsProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -44,7 +45,13 @@ export function MarketStats({ mintAddress, symbol, poolData }: MarketStatsProps)
           <div className="flex justify-between items-center">
             <span className="text-gray-400">Price</span>
             <span className="font-mono font-medium">
-              ${(poolData?.price || 0).toLocaleString(undefined, { minimumFractionDigits: 13, maximumFractionDigits: 13 })}
+              ${(poolData?.price || 0).toLocaleString(undefined, { minimumFractionDigits: 10, maximumFractionDigits: 10 })}
+            </span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-gray-400">24h Change</span>
+            <span className={`font-mono font-medium ${priceChange24h >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+              {priceChange24h >= 0 ? '+' : ''}{priceChange24h.toFixed(2)}%
             </span>
           </div>
           <div className="flex justify-between items-center">

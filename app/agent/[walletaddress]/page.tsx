@@ -540,6 +540,7 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
                 mintAddress={token.mint_address} 
                 symbol={token.token_symbol}
                 poolData={token.market?.stats || null}
+                priceChange24h={token.priceChange24h}
               />
               <TokenHolders
                 mintAddress={token.mint_address}
@@ -573,8 +574,6 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
             </CardHeader>
             <CardContent className="space-y-4 p-3 sm:p-6">
               <TokenStat label="Symbol" value={token.token_symbol} />
-              <TokenStat label="Price" value={`$${token.price.toLocaleString(undefined, { minimumFractionDigits: 10, maximumFractionDigits: 10 })}`} />
-              <TokenStat label="24h Change" value={`${token.priceChange24h.toFixed(2)}%`} />
               {token.created_at && (
                 <TokenStat 
                   label="Created" 
