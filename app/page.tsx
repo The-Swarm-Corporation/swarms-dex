@@ -51,85 +51,87 @@ function TokenCard({ token }: { token: Web3Agent & {
   const marketCap = token.market?.stats?.marketCap || token.market_cap || 0
 
   return (
-    <Card className="group bg-black/50 border border-red-500/20 hover:border-red-500/40 transition-all hover:scale-[1.02] hover:shadow-lg hover:shadow-red-500/10">
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            {token.image_url && (
-              <div className="w-12 h-12 rounded-full overflow-hidden bg-black/20">
-                <img 
-                  src={token.image_url} 
-                  alt={`${token.name} logo`}
-                  className="w-full h-full object-cover"
-                />
-              </div>
-            )}
-            <div className="space-y-1">
-              <h2 className="text-xl font-bold group-hover:text-red-500 transition-colors">
-                {token.name}
-                {token.is_verified && (
-                  <Badge variant="secondary" className="ml-2">
-                    Verified
+    <Link href={`/agent/${token.mint_address}`} className="block">
+      <Card className="group bg-black/50 border border-red-500/20 hover:border-red-500/40 transition-all hover:scale-[1.02] hover:shadow-lg hover:shadow-red-500/10">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              {token.image_url && (
+                <div className="w-12 h-12 rounded-full overflow-hidden bg-black/20">
+                  <img 
+                    src={token.image_url} 
+                    alt={`${token.name} logo`}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              )}
+              <div className="space-y-1">
+                <h2 className="text-xl font-bold group-hover:text-red-500 transition-colors">
+                  {token.name}
+                  {token.is_verified && (
+                    <Badge variant="secondary" className="ml-2">
+                      Verified
+                    </Badge>
+                  )}
+                </h2>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="w-fit">
+                    {token.token_symbol}
                   </Badge>
-                )}
-              </h2>
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className="w-fit">
-                  {token.token_symbol}
-                </Badge>
-                {token.price_change_24h !== undefined && (
-                  <Badge
-                    variant={token.price_change_24h >= 0 ? "default" : "destructive"}
-                    className={`${token.price_change_24h >= 0 ? "bg-green-500/20 text-green-500 hover:bg-green-500/30" : ""}`}
-                  >
-                    {token.price_change_24h >= 0 ? "+" : ""}
-                    {token.price_change_24h.toFixed(2)}%
-                  </Badge>
-                )}
+                  {token.price_change_24h !== undefined && (
+                    <Badge
+                      variant={token.price_change_24h >= 0 ? "default" : "destructive"}
+                      className={`${token.price_change_24h >= 0 ? "bg-green-500/20 text-green-500 hover:bg-green-500/30" : ""}`}
+                    >
+                      {token.price_change_24h >= 0 ? "+" : ""}
+                      {token.price_change_24h.toFixed(2)}%
+                    </Badge>
+                  )}
+                </div>
               </div>
             </div>
+            {token.is_swarm ? (
+              <Users className="h-6 w-6 text-red-500 group-hover:scale-110 transition-transform" />
+            ) : (
+              <Bot className="h-6 w-6 text-red-500 group-hover:scale-110 transition-transform" />
+            )}
           </div>
-          {token.is_swarm ? (
-            <Users className="h-6 w-6 text-red-500 group-hover:scale-110 transition-transform" />
-          ) : (
-            <Bot className="h-6 w-6 text-red-500 group-hover:scale-110 transition-transform" />
-          )}
-        </div>
-      </CardHeader>
-      <CardContent>
-        <p className="text-gray-400 mb-4 line-clamp-2">{token.description}</p>
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <div className="text-sm text-gray-400">Price</div>
-            <div className="font-mono text-lg">${formatPrice(token.market?.stats?.price || token.current_price)}</div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-gray-400 mb-4 line-clamp-2">{token.description}</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <div className="text-sm text-gray-400">Price</div>
+              <div className="font-mono text-lg">${formatPrice(token.market?.stats?.price || token.current_price)}</div>
+            </div>
+            <div className="space-y-2">
+              <div className="text-sm text-gray-400">Volume 24h</div>
+              <div className="font-mono text-lg">${formatValue(token.market?.stats?.volume24h || token.volume_24h)}</div>
+            </div>
+            <div className="space-y-2">
+              <div className="text-sm text-gray-400">Market Cap</div>
+              <div className="font-mono text-lg">${formatValue(marketCap)}</div>
+            </div>
           </div>
-          <div className="space-y-2">
-            <div className="text-sm text-gray-400">Volume 24h</div>
-            <div className="font-mono text-lg">${formatValue(token.market?.stats?.volume24h || token.volume_24h)}</div>
-          </div>
-          <div className="space-y-2">
-            <div className="text-sm text-gray-400">Market Cap</div>
-            <div className="font-mono text-lg">${formatValue(marketCap)}</div>
-          </div>
-        </div>
-      </CardContent>
-      <CardFooter className="flex justify-between">
-        <div className="flex space-x-2">
+        </CardContent>
+        <CardFooter>
           {token.twitter_handle && (
-            <Link
-              href={`https://twitter.com/${token.twitter_handle}`}
-              target="_blank"
-              className="text-gray-400 hover:text-red-500 transition-colors"
+            <div 
+              onClick={(e) => e.stopPropagation()}
+              className="relative z-10"
             >
-              <ExternalLink className="h-4 w-4" />
-            </Link>
+              <Link
+                href={`https://twitter.com/${token.twitter_handle}`}
+                target="_blank"
+                className="text-gray-400 hover:text-red-500 transition-colors"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </Link>
+            </div>
           )}
-        </div>
-        <Link href={`/agent/${token.mint_address}`}>
-          <Badge className="bg-red-500 hover:bg-red-600 transition-colors">View Details</Badge>
-        </Link>
-      </CardFooter>
-    </Card>
+        </CardFooter>
+      </Card>
+    </Link>
   )
 }
 
