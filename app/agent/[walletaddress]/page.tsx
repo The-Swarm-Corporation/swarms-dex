@@ -598,7 +598,7 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
                     <div className="text-sm font-medium">Social Links</div>
                     {token.twitter_handle && (
                       <a
-                        href={`https://twitter.com/${token.twitter_handle.replace('@', '')}`}
+                        href={`https://x.com/${token.twitter_handle.replace('@', '')}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-sm text-red-500 hover:text-red-400 flex items-center gap-2"
@@ -624,7 +624,7 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
                     )}
                     {token.discord_server && (
                       <a
-                        href={token.discord_server}
+                        href={token.discord_server?.includes('discord') ? `https://${token.discord_server}` : `https://discord.com/invite/${token.discord_server}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-sm text-red-500 hover:text-red-400 flex items-center gap-2"
