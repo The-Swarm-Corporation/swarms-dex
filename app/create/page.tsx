@@ -25,6 +25,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useWallet } from '@solana/wallet-adapter-react'
 
 interface FormData {
   name: string
@@ -61,6 +62,7 @@ export default function CreateAgent() {
   const router = useRouter()
   const { user, loading: authLoading } = useAuth()
   const { connection } = useSolana()
+  const { publicKey, signTransaction, connected } = useWallet()
   const [isLoading, setIsLoading] = useState(false)
   const [formData, setFormData] = useState<FormData>(initialFormData)
   const [error, setError] = useState<FormError | null>(null)
@@ -196,30 +198,15 @@ export default function CreateAgent() {
 
     const walletAddress = user.user_metadata.wallet_address
 
-    // @ts-ignore - Phantom wallet type
-    const provider = window?.phantom?.solana
-    if (!provider) {
-      toast.error("Please install Phantom wallet")
+    if (!connected || !publicKey || !signTransaction) {
+      toast.error("Please connect your wallet")
       return
     }
 
-    // Try to reconnect wallet if needed
-    if (!provider.isConnected || provider.publicKey?.toString() !== walletAddress) {
-      try {
-        await provider.connect()
-        if (provider.publicKey?.toString() !== walletAddress) {
-          toast.loading("Session expired. Please sign in again...")
-          const success = await signInWithWallet(provider.publicKey)
-          if (!success) {
-            toast.error("Failed to sign in with wallet")
-            return
-          }
-          toast.success("Successfully reconnected wallet")
-        }
-      } catch (error) {
-        toast.error("Failed to reconnect wallet. Please try connecting manually.")
-        return
-      }
+    // Verify the connected wallet matches the authenticated wallet
+    if (publicKey.toString() !== walletAddress) {
+      toast.error("Connected wallet does not match authenticated wallet. Please connect the correct wallet.")
+      return
     }
 
     if (!validateForm()) {
@@ -241,7 +228,7 @@ export default function CreateAgent() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          walletAddress: provider.publicKey.toString()
+          walletAddress: publicKey.toString()
         })
       })
 
@@ -262,7 +249,7 @@ export default function CreateAgent() {
       const mintFormData = new FormData()
       mintFormData.append('image', formData.image!)
       mintFormData.append('data', JSON.stringify({
-        userPublicKey: provider.publicKey.toString(),
+        userPublicKey: publicKey.toString(),
         tokenName: formData.name,
         tickerSymbol: formData.tokenSymbol,
         description: formData.description,
@@ -324,12 +311,9 @@ export default function CreateAgent() {
                   });
 
                   try {
-                    // Sign with the user's wallet
-                    const signedTokenTx = await provider.signTransaction(tokenTx);
+                    // Sign with the user's wallet using wallet adapter
+                    const signedTokenTx = await signTransaction(tokenTx);
 
-                    // Continue with the rest of the token creation process...
-                    // [Previous code for sending signed transaction remains the same]
-                    
                     // Send signed transaction through backend
                     const confirmResponse = await fetch('/api/solana/mint-token', {
                       method: 'PUT',
@@ -338,7 +322,7 @@ export default function CreateAgent() {
                         signedTokenTx: signedTokenTx.serialize().toString('base64'),
                         tokenMint,
                         bondingCurveAddress,
-                        userPublicKey: provider.publicKey.toString(),
+                        userPublicKey: publicKey.toString(),
                         tokenName: formData.name,
                         tickerSymbol: formData.tokenSymbol,
                         description: formData.description,
@@ -354,7 +338,110 @@ export default function CreateAgent() {
                       throw new Error(error.error || 'Failed to create token');
                     }
 
-                    // [Rest of the success handling code remains the same]
+                    const { signature: tokenSignature } = await confirmResponse.json()
+
+                    logger.info("Token creation completed", {
+                      signature: tokenSignature,
+                      mint: tokenMint
+                    })
+            
+                    // Automatically create pool
+                    toast.loading("Creating liquidity pool...", { id: toastId })
+            
+                    try {
+                      // First check if we have enough SOL for pool creation
+                      const poolSimResponse = await fetch('/api/solana/create-pool', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          tokenMint,
+                          userPublicKey: publicKey.toString(),
+                          createPool: false // Just simulate first
+                        })
+                      });
+            
+                      if (!poolSimResponse.ok) {
+                        const error = await poolSimResponse.json();
+                        throw new Error(error.error || 'Failed to simulate pool creation');
+                      }
+            
+                      const simResult = await poolSimResponse.json();
+                      
+                      // If we need more SOL, show the transfer UI
+                      if (!simResult.readyToProceed) {
+                        toast.error(
+                          `Pool creation needs ${simResult.recommendedSol.toFixed(4)} SOL. Please send SOL to your bonding curve account and try again from your agent page.`, 
+                          { id: toastId, duration: 8000 }
+                        );
+                        // Show bonding curve address for easy copy
+                        toast.info(
+                          <div className="mt-2 text-xs font-mono break-all">
+                            <div>Bonding Curve Address:</div>
+                            <div>{bondingCurveAddress}</div>
+                          </div>,
+                          { duration: 15000 }
+                        );
+                        router.push(`/agent/${tokenMint}`);
+                        return;
+                      }
+            
+                      // If we have enough SOL, proceed with pool creation
+                      const poolResponse = await fetch('/api/solana/create-pool', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          tokenMint,
+                          userPublicKey: publicKey.toString(),
+                          createPool: true
+                        })
+                      });
+            
+                      if (!poolResponse.ok) {
+                        const error = await poolResponse.json();
+                        throw new Error(error.error || 'Failed to create pool');
+                      }
+            
+                      const { signature: poolSignature, poolAddress } = await poolResponse.json();
+            
+                      toast.success("Agent created successfully!", { 
+                        id: toastId,
+                        duration: 5000,
+                        description: (
+                          <div className="mt-2 text-xs font-mono break-all">
+                            <div>Token: {formData.tokenSymbol}</div>
+                            <div>Pool: {poolAddress}</div>
+                            <div>
+                              <a
+                                href={`https://explorer.solana.com/tx/${poolSignature}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-500 hover:text-blue-600"
+                              >
+                                View Pool Creation
+                              </a>
+                            </div>
+                          </div>
+                        ),
+                      });
+            
+                      router.push(`/agent/${tokenMint}`);
+                                
+                  } catch (error) {
+                    logger.error("Pool creation failed", error as Error);
+                    toast.error(
+                      "Token created but pool creation failed. Send 0.12 SOL to your bonding curve account and try again from your agent page.", 
+                      { id: toastId, duration: 8000 }
+                    );
+                    // Show bonding curve address for easy copy
+                    toast.info(
+                      <div className="mt-2 text-xs font-mono break-all">
+                        <div>Bonding Curve Address:</div>
+                        <div>{bondingCurveAddress}</div>
+                      </div>,
+                      { duration: 15000 }
+                    );
+                    router.push(`/agent/${tokenMint}`);
+                  }
                   } catch (error) {
                     if (error instanceof Error && error.message.includes('User rejected')) {
                       toast.error("Transaction was rejected by user", { id: toastId });

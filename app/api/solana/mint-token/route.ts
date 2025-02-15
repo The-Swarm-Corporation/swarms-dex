@@ -1,4 +1,4 @@
-import { Connection, PublicKey, LAMPORTS_PER_SOL, Transaction, SystemProgram, Keypair, SYSVAR_INSTRUCTIONS_PUBKEY, ComputeBudgetProgram } from "@solana/web3.js";
+import { Connection, PublicKey, LAMPORTS_PER_SOL, Transaction, SystemProgram, Keypair, TransactionInstruction, SYSVAR_RENT_PUBKEY, SYSVAR_INSTRUCTIONS_PUBKEY, ComputeBudgetProgram } from "@solana/web3.js";
 import { createClient } from "@supabase/supabase-js";
 import { logger } from "@/lib/logger";
 import { 
@@ -16,7 +16,7 @@ import { createV1, TokenStandard } from '@metaplex-foundation/mpl-token-metadata
 import { createUmi } from '@metaplex-foundation/umi-bundle-defaults';
 import { toWeb3JsInstruction } from '@metaplex-foundation/umi-web3js-adapters';
 import { mplTokenMetadata } from '@metaplex-foundation/mpl-token-metadata';
-import { encrypt, decrypt } from '@/lib/crypto';
+import { encrypt } from '@/lib/crypto';
 import { BN } from '@project-serum/anchor';
 import { AmmImpl } from "@mercurial-finance/dynamic-amm-sdk";
 
@@ -78,12 +78,11 @@ try {
 
 const TOKEN_DECIMALS = 6;
 const INITIAL_SUPPLY = 1_000_000_000; // 1B actual tokens to mint
-const VIRTUAL_TOKEN_SUPPLY = 73_000_191; // Virtual supply used for calculations
-const INITIAL_VIRTUAL_SWARMS = 15000; // 20000 SWARMS virtual reserve
-// Scale k value for 20000 SWARMS to maintain price dynamics
-// Original PUMP.FUN k value scaled for our virtual supply and higher SWARMS reserve
-const K_VALUE = 32_190_005_730 * (VIRTUAL_TOKEN_SUPPLY / 1_073_000_191) * (15000/500);
-const POOL_CREATION_SOL = 0.08; // Fixed amount for pool creation
+const INITIAL_VIRTUAL_SWARMS = 500; // 500 SWARMS virtual reserve
+const VIRTUAL_TOKEN_SUPPLY = 1_073_000_191; // Virtual supply used for calculations
+// Original K value from PUMP.FUN scaled up by (500/30) to maintain same price dynamics
+const K_VALUE = 32_190_005_730 * (500/30); // Scale k value for 500 SWARMS instead of 30 SOL
+const POOL_CREATION_SOL = 0.06; // Fixed amount for pool creation
 
 console.log('Creating SWARMS Token PublicKey...');
 try {
@@ -98,10 +97,14 @@ try {
   throw error;
 }
 
-// Route configuration for file uploads and dynamic execution
-export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
-export const maxDuration = 300 // 5 minutes timeout for long-running minting process
+const SWARMS_MINIMUM_BUY_IN = 1;
+
+// Increase payload size limit for file uploads
+export const config = {
+  api: {
+    bodyParser: false
+  }
+}
 
 // Add function to derive pool PDA
 async function derivePoolAccount(mint: PublicKey): Promise<[PublicKey, number]> {
@@ -113,22 +116,10 @@ async function derivePoolAccount(mint: PublicKey): Promise<[PublicKey, number]> 
 
 // Calculate tokens for given SWARMS amount using PUMP.FUN formula
 function calculateTokenAmount(swarmsAmount: number): number {
-  // Prevent division by zero and negative values
-  if (swarmsAmount <= 0) return 0
-  
-  // Calculate virtual balances first
-  const currentVirtualSwarms = INITIAL_VIRTUAL_SWARMS
-  const totalVirtualSwarms = INITIAL_VIRTUAL_SWARMS + swarmsAmount
-  
-  // Calculate tokens using constant product formula: k = x * y
-  const currentVirtualTokens = K_VALUE / currentVirtualSwarms
-  const newVirtualTokens = K_VALUE / totalVirtualSwarms
-  
-  // The difference is how many tokens they receive
-  const virtualTokensToReceive = currentVirtualTokens - newVirtualTokens
-  
-  // Scale down to actual supply and ensure non-negative
-  return Math.max(0, (virtualTokensToReceive / VIRTUAL_TOKEN_SUPPLY) * INITIAL_SUPPLY)
+  // Use PUMP.FUN formula but with 500 SWARMS base: y = 1073000191 - (32190005730 * 500/30)/(500+x)
+  const virtualTokens = VIRTUAL_TOKEN_SUPPLY - (K_VALUE / (INITIAL_VIRTUAL_SWARMS + swarmsAmount));
+  // Scale down to actual supply (1B)
+  return (virtualTokens / VIRTUAL_TOKEN_SUPPLY) * INITIAL_SUPPLY;
 }
 
 // Add helper function to simulate pool creation cost
@@ -156,7 +147,7 @@ async function simulatePoolCreationCost(
       activationType: 0,
       activationPoint: null,
       hasAlphaVault: false,
-      padding: Array(90).fill(0)
+      padding: Array(32).fill(0)
     },
     {
       cluster: 'mainnet-beta'
@@ -190,6 +181,44 @@ async function simulatePoolCreationCost(
 
   // Return total cost with buffer
   return (estimatedFee + totalRentExempt) * 1.2; // 20% buffer
+}
+
+// Add function to calculate total required SOL
+async function calculateRequiredSol(
+  connection: Connection,
+  userPubkey: PublicKey,
+  mintKeypair: PublicKey,
+  bondingCurveKeypair: PublicKey
+): Promise<number> {
+  // 1. Calculate rent exemptions
+  const accountRentExempt = await connection.getMinimumBalanceForRentExemption(0);
+  const mintRentExempt = await connection.getMinimumBalanceForRentExemption(MINT_SIZE);
+  const ataRentExempt = await connection.getMinimumBalanceForRentExemption(165); // Standard ATA size
+  
+  // 2. Simulate pool creation cost
+  const poolCreationCost = await simulatePoolCreationCost(
+    connection,
+    bondingCurveKeypair,
+    mintKeypair
+  );
+
+  // 3. Calculate total with all components
+  const totalCost = (
+    accountRentExempt +    // Bonding curve account rent
+    mintRentExempt +       // Mint account rent
+    (ataRentExempt * 2) +  // Two ATAs (token and SWARMS)
+    poolCreationCost       // Pool creation cost (includes its own buffer)
+  ) / LAMPORTS_PER_SOL;
+
+  console.log('Cost breakdown:', {
+    accountRent: accountRentExempt / LAMPORTS_PER_SOL,
+    mintRent: mintRentExempt / LAMPORTS_PER_SOL,
+    ataRent: (ataRentExempt * 2) / LAMPORTS_PER_SOL,
+    poolCreation: poolCreationCost,
+    total: totalCost
+  });
+
+  return totalCost;
 }
 
 export async function POST(req: Request) {
@@ -619,87 +648,6 @@ export async function PUT(req: Request) {
       }
     }
 
-    // After token creation is confirmed, create the pool
-    console.log('Creating liquidity pool...');
-    
-    // Get the bonding curve keypair from database
-    const { data: bondingCurveData, error: bcError } = await supabase
-      .from('bonding_curve_keys')
-      .select('encrypted_private_key')
-      .eq('public_key', bondingCurveAddress)
-      .single();
-
-    if (bcError || !bondingCurveData) {
-      throw new Error('Failed to retrieve bonding curve keypair');
-    }
-
-    // Decrypt the private key
-    const privateKeyBase64 = await decrypt(bondingCurveData.encrypted_private_key);
-    const bondingCurveKeypair = Keypair.fromSecretKey(Buffer.from(privateKeyBase64, 'base64'));
-
-    // Set up pool parameters
-    const baseDecimals = TOKEN_DECIMALS;
-    const quoteDecimals = TOKEN_DECIMALS;
-    const baseAmount = new BN(100_000).mul(new BN(10 ** baseDecimals));
-    const quoteAmount = new BN(100).mul(new BN(10 ** quoteDecimals));
-
-    // Create pool transaction
-    const initPoolTx = await AmmImpl.createCustomizablePermissionlessConstantProductPool(
-      connection,
-      bondingCurveKeypair.publicKey,
-      new PublicKey(tokenMint),
-      SWARMS_TOKEN_ADDRESS,
-      baseAmount,
-      quoteAmount,
-      {
-        tradeFeeNumerator: new BN(30),
-        activationType: 0,
-        activationPoint: null,
-        hasAlphaVault: false,
-        padding: Array(32).fill(0)
-      },
-      {
-        cluster: 'mainnet-beta'
-      }
-    );
-
-    // Add compute budget instruction for pool creation
-    const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 });
-    initPoolTx.instructions = [modifyComputeUnits, ...initPoolTx.instructions];
-    initPoolTx.feePayer = bondingCurveKeypair.publicKey;
-
-    // Get latest blockhash for pool transaction
-    const { blockhash: poolBlockhash } = await connection.getLatestBlockhash('finalized');
-    initPoolTx.recentBlockhash = poolBlockhash;
-
-    // Sign and send pool transaction
-    initPoolTx.sign(bondingCurveKeypair);
-    
-    console.log('Sending pool creation transaction...');
-    const poolSignature = await connection.sendRawTransaction(initPoolTx.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed',
-      maxRetries: 5
-    });
-
-    console.log('Pool creation transaction sent:', poolSignature);
-
-    // Wait for pool creation confirmation
-    const poolConfirmation = await connection.confirmTransaction({
-      signature: poolSignature,
-      blockhash: poolBlockhash,
-      lastValidBlockHeight: await connection.getBlockHeight() + 150
-    }, 'confirmed');
-
-    if (poolConfirmation.value.err) {
-      throw new Error(`Pool creation failed: ${JSON.stringify(poolConfirmation.value.err)}`);
-    }
-
-    console.log('Pool creation confirmed');
-
-    // Get pool address
-    const [poolAddress] = await derivePoolAccount(new PublicKey(tokenMint));
-
     // Create database entry
     const { data: agent, error: agentError } = await supabase
       .from("web3agents")
@@ -709,7 +657,6 @@ export async function PUT(req: Request) {
         token_symbol: metadata.tickerSymbol,
         mint_address: tokenMint,
         bonding_curve_address: bondingCurveAddress,
-        pool_address: poolAddress.toString(),
         graduated: false,
         creator_wallet: userPublicKey,
         created_at: new Date(),
@@ -738,19 +685,15 @@ export async function PUT(req: Request) {
       .from('bonding_curve_keys')
       .update({ 
         agent_id: agent.id,
-        token_signature: signature,
-        pool_signature: poolSignature,
-        pool_address: poolAddress.toString()
+        token_signature: signature
       })
       .eq('public_key', bondingCurveAddress);
 
     return new Response(JSON.stringify({ 
       success: true,
       signature,
-      poolSignature,
       tokenMint,
       bondingCurveAddress,
-      poolAddress: poolAddress.toString(),
       agentId: agent.id
     }), { status: 200 });
 
