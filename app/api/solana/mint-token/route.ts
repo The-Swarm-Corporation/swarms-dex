@@ -100,11 +100,8 @@ try {
 const SWARMS_MINIMUM_BUY_IN = 1;
 
 // Increase payload size limit for file uploads
-export const config = {
-  api: {
-    bodyParser: false
-  }
-}
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 // Add function to derive pool PDA
 async function derivePoolAccount(mint: PublicKey): Promise<[PublicKey, number]> {
