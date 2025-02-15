@@ -369,7 +369,7 @@ export async function POST(req: Request) {
     // Get latest blockhash
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
     initPoolTx.recentBlockhash = blockhash;
-    initPoolTx.lastValidBlockHeight = lastValidBlockHeight + 150;
+    initPoolTx.lastValidBlockHeight = lastValidBlockHeight + 2500;
 
     // Get bonding curve balance before simulation
     const bondingCurveBalance = await connection.getBalance(bondingCurveKeypair.publicKey);

@@ -82,7 +82,7 @@ const INITIAL_VIRTUAL_SWARMS = 500; // 500 SWARMS virtual reserve
 const VIRTUAL_TOKEN_SUPPLY = 1_073_000_191; // Virtual supply used for calculations
 // Original K value from PUMP.FUN scaled up by (500/30) to maintain same price dynamics
 const K_VALUE = 32_190_005_730 * (500/30); // Scale k value for 500 SWARMS instead of 30 SOL
-const POOL_CREATION_SOL = 0.06; // Fixed amount for pool creation
+const POOL_CREATION_SOL = 0.07; // Fixed amount for pool creation
 
 console.log('Creating SWARMS Token PublicKey...');
 try {
