@@ -4,6 +4,7 @@ import { logger } from "../logger"
 import { logActivity } from "../client/logging"
 import bs58 from "bs58"
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
+import { WalletContextState } from '@solana/wallet-adapter-react'
 
 // Phantom wallet types
 declare global {
@@ -21,7 +22,7 @@ declare global {
   }
 }
 
-export async function signInWithWallet(publicKey: PublicKey) {
+export async function signInWithWallet(publicKey: PublicKey, wallet: WalletContextState) {
   const supabase = createClientComponentClient()
   
   try {
@@ -35,24 +36,20 @@ export async function signInWithWallet(publicKey: PublicKey) {
     const message = `Sign this message to authenticate with swarms Marketplace: ${nonce}`
     const encodedMessage = new TextEncoder().encode(message)
 
-    // Check if Phantom wallet is available
-    if (!window.phantom?.solana) {
-      throw new Error("Phantom wallet is not installed")
+    if (!wallet.signMessage) {
+      throw new Error("Wallet does not support message signing")
     }
 
     try {
       // Request wallet signature
-      const signResult = await window.phantom.solana.signMessage(
-        encodedMessage,
-        'utf8'
-      )
+      const signature = await wallet.signMessage(encodedMessage)
 
-      if (!signResult?.signature) {
+      if (!signature) {
         throw new Error("Failed to get signature from wallet")
       }
 
       // Convert signature to base58 string
-      const signature = bs58.encode(signResult.signature)
+      const signatureString = bs58.encode(signature)
 
       // Authenticate with our API endpoint
       const response = await fetch("/api/auth/wallet", {
@@ -62,7 +59,7 @@ export async function signInWithWallet(publicKey: PublicKey) {
         },
         body: JSON.stringify({
           publicKey: publicKey.toString(),
-          signature,
+          signature: signatureString,
           nonce
         }),
         credentials: 'include' // Important for cookie handling
