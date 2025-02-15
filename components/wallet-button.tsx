@@ -2,7 +2,6 @@
 
 import { Button } from "@/components/ui/button"
 import { signInWithWallet, signOut } from "@/lib/auth/wallet"
-import { PublicKey } from "@solana/web3.js"
 import { Loader2 } from "lucide-react"
 import { useAuth } from "./providers/auth-provider"
 import { useState } from "react"
@@ -15,7 +14,8 @@ require('@solana/wallet-adapter-react-ui/styles.css')
 export function WalletButton() {
   const { user, loading } = useAuth()
   const [signing, setSigning] = useState(false)
-  const { publicKey, connected, connecting } = useWallet()
+  const wallet = useWallet()
+  const { publicKey, connected, connecting } = wallet
 
   const handleClick = async () => {
     if (signing) return
@@ -33,7 +33,7 @@ export function WalletButton() {
         return
       }
 
-      const success = await signInWithWallet(publicKey)
+      const success = await signInWithWallet(publicKey, wallet)
       
       if (!success) {
         toast.error("Failed to sign in with wallet")
