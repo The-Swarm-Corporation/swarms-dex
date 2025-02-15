@@ -65,7 +65,6 @@ export function TokenTradingPanel({
   const [gasFee, setGasFee] = useState(0.00005) // Default SOL gas fee
   const [currentPoolAddress, setCurrentPoolAddress] = useState<string | null>(initialPoolAddress || null)
   const [showPoolModal, setShowPoolModal] = useState(false)
-  const [additionalSwarms, setAdditionalSwarms] = useState('0')
   const [showConfetti, setShowConfetti] = useState(false)
   const [windowSize, setWindowSize] = useState({
     width: typeof window !== 'undefined' ? window.innerWidth : 0,
@@ -351,7 +350,7 @@ export function TokenTradingPanel({
 
       onTradingStateChange?.(true);
       setIsLoading(true)
-      const toastId = toast.loading("Initializing pool creation...")
+      const toastId = toast.loading("Creating liquidity pool...")
 
       try {
         // Add robust wallet detection with retries
@@ -394,110 +393,6 @@ export function TokenTradingPanel({
           return
         }
 
-        // Handle SWARMS deposit first if specified
-        if (additionalSwarms && Number(additionalSwarms) > 0) {
-          toast.loading("Processing SWARMS deposit...", { id: toastId });
-          
-          // Get user's SWARMS token account
-          const userSwarmsAccount = await getAssociatedTokenAddress(
-            new PublicKey(swapsTokenAddress!),
-            new PublicKey(walletAddress)
-          );
-
-          // Create transfer transaction
-          const response = await fetch('/api/solana/transfer-swarms', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              walletAddress,
-              swarmsAmount: additionalSwarms,
-              fromAccount: userSwarmsAccount.toString(),
-              toAccount: bondingCurveAddress,
-              isBondingCurveDeposit: true,
-              currentSwarmsAmount: initialSwarmsAmount,
-              symbol,
-              mintAddress
-            })
-          });
-
-          if (!response.ok) {
-            const error = await response.json();
-            if (error.details) {
-              // Handle insufficient balance error with details
-              const { required, balance, token, decimals: tokenDecimals = 6 } = error.details;
-              toast.error("Insufficient SWARMS balance", {
-                description: (
-                  <div className="mt-2 text-xs font-mono">
-                    <div>Required: {(Number(required) / Math.pow(10, tokenDecimals)).toFixed(6)} {token}</div>
-                    <div>Available: {(Number(balance) / Math.pow(10, tokenDecimals)).toFixed(6)} {token}</div>
-                  </div>
-                )
-              });
-              return;
-            }
-            throw new Error(error.error || 'Failed to create SWARMS transfer');
-          }
-
-          const { transaction: serializedTx } = await response.json();
-          toast.loading("Please approve SWARMS transfer...", { id: toastId });
-
-          const tx = Transaction.from(Buffer.from(serializedTx, 'base64'));
-          const signedTx = await provider.signTransaction(tx);
-          
-          // Send signed transaction
-          const submitResponse = await fetch('/api/solana/transfer-swarms', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              signedTransaction: signedTx.serialize().toString('base64')
-            })
-          });
-
-          if (!submitResponse.ok) {
-            throw new Error('Failed to submit SWARMS transfer');
-          }
-
-          const { signature } = await submitResponse.json();
-
-          // Wait for confirmation
-          toast.loading("Confirming SWARMS transfer...", { id: toastId });
-          
-          const confirmResponse = await fetch('/api/solana/confirm-transaction', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ signature })
-          });
-
-          if (!confirmResponse.ok) {
-            throw new Error('Failed to confirm SWARMS transfer');
-          }
-        
-          toast.success("SWARMS transfer complete", {
-            id: toastId,
-            description: (
-              <div className="mt-2 text-xs font-mono">
-                <div>Transferred {additionalSwarms} SWARMS</div>
-                <div>
-                  <a
-                    href={`https://solscan.io/tx/${signature}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-500 hover:text-blue-600"
-                  >
-                    View transaction
-                  </a>
-                </div>
-              </div>
-            )
-          });
-
-          // Short delay before proceeding to pool creation
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-
-        // Proceed with pool creation
-        toast.loading("Creating liquidity pool...", { id: toastId });
-
         const poolResponse = await fetch('/api/solana/create-pool', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -509,7 +404,6 @@ export function TokenTradingPanel({
 
         const poolData = await poolResponse.json();
 
-        // If pool creation succeeded immediately
         if (poolResponse.ok) {
           const { signature, poolAddress, details } = poolData;
 
@@ -532,7 +426,6 @@ export function TokenTradingPanel({
             ),
           });
 
-          // Log successful pool creation
           await logActivity({
             category: "trade",
             level: "info",
@@ -541,22 +434,17 @@ export function TokenTradingPanel({
               symbol,
               poolAddress,
               signature,
-              additionalSwarms: Number(additionalSwarms) > 0 ? additionalSwarms : undefined,
               ...details
             },
             wallet_address: walletAddress,
           });
 
-          // Update local state
           setCurrentPoolAddress(poolAddress);
           setAmount('');
           setShowPoolModal(false);
-          
-          // Notify parent component
           onPoolCreated?.(poolAddress);
           setShowConfetti(true);
           
-          // Delay turning off trading state to allow confetti to show
           setTimeout(() => {
             setIsLoading(false);
             onTradingStateChange?.(false);
@@ -579,8 +467,7 @@ export function TokenTradingPanel({
             breakdown
           } = details;
 
-          // Add extra SOL for the transfer transaction itself
-          const transferGasFee = 0.00005; // Base gas fee for transfer
+          const transferGasFee = 0.00005;
           const totalNeeded = neededAmount + transferGasFee;
 
           toast.loading(
@@ -600,13 +487,10 @@ export function TokenTradingPanel({
             { id: toastId, duration: 10000 }
           );
 
-          // Sign the prepared transaction
           const tx = Transaction.from(Buffer.from(fundingTx, 'base64'));
           
           try {
             const signedTx = await provider.signTransaction(tx);
-
-            // Submit the signed transaction
             const submitResponse = await fetch('/api/solana/create-pool', {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
@@ -620,8 +504,6 @@ export function TokenTradingPanel({
             }
 
             const { signature } = await submitResponse.json();
-
-            // Wait for confirmation
             const confirmResponse = await fetch('/api/solana/confirm-transaction', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -651,10 +533,7 @@ export function TokenTradingPanel({
               )
             });
 
-            // Wait a bit for the transaction to settle
             await new Promise(resolve => setTimeout(resolve, 2000));
-            
-            // Retry pool creation
             handleCreatePool();
             return;
           } catch (error) {
@@ -671,15 +550,13 @@ export function TokenTradingPanel({
         console.error('Pool creation failed:', error);
         toast.error(error instanceof Error ? error.message : "Failed to create pool");
         
-        // Log the error
         await logActivity({
           category: "trade",
           level: "error",
           action: "pool_creation_failed",
           details: {
             symbol,
-            error: error instanceof Error ? error.message : "Unknown error",
-            additionalSwarms: Number(additionalSwarms) > 0 ? additionalSwarms : undefined
+            error: error instanceof Error ? error.message : "Unknown error"
           },
           wallet_address: walletAddress,
         });
@@ -734,66 +611,30 @@ export function TokenTradingPanel({
             <div className="space-y-4">
               {showCreatePool ? (
                 <>
-                  <p className="text-sm text-gray-400">No liquidity pool exists for this token yet. As the token creator, you can create one to enable trading.</p>
-                  <form 
-                    onSubmit={(e) => {
+                  <p className="text-sm text-gray-400">No liquidity pool exists for this token yet. You can create one to enable trading.</p>
+                  <Button
+                    type="button"
+                    onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
+                      handleCreatePool();
                       return false;
-                    }} 
-                    className="space-y-4" 
-                    noValidate
+                    }}
+                    disabled={isLoading}
+                    className="w-full mt-4 bg-red-600 hover:bg-red-700"
                   >
-                    <div className="pt-4">
-                        <Label>Additional SWARMS (Optional)</Label>
-                        <Input
-                          type="number"
-                          placeholder="Enter additional SWARMS amount"
-                          value={additionalSwarms}
-                          onChange={(e) => setAdditionalSwarms(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              return false;
-                            }
-                          }}
-                          className="bg-black/50 border-red-600/20 focus:border-red-600 mt-2"
-                        />
-                        <div className="text-xs text-gray-400 space-y-1 mt-2">
-                          <div>Current SWARMS in bonding curve: {initialSwarmsAmount}</div>
-                          {additionalSwarms !== '0' && (
-                            <div className="bg-black/20 p-2 rounded">
-                              <div>+ {additionalSwarms} SWARMS (new deposit)</div>
-                              <div>= {Number(initialSwarmsAmount) + Number(additionalSwarms)} SWARMS total</div>
-                            </div>
-                          )}
-                        </div>
-                      <Button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleCreatePool();
-                          return false;
-                        }}
-                        disabled={isLoading}
-                        className="w-full mt-4 bg-red-600 hover:bg-red-700"
-                      >
-                        {isLoading ? (
-                          <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            {additionalSwarms !== '0' ? 'Depositing SWARMS & Creating Pool...' : 'Creating Pool...'}
-                          </>
-                        ) : (
-                          additionalSwarms !== '0' ? 'Deposit SWARMS & Create Pool' : 'Create Pool'
-                        )}
-                      </Button>
-                    </div>
-                  </form>
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Creating Pool...
+                      </>
+                    ) : (
+                      'Create Pool'
+                    )}
+                  </Button>
                 </>
               ) : (
-                <p className="text-sm text-gray-400">No liquidity pool has been established for this token yet. Trading will be enabled once the token creator creates a pool.</p>
+                <p className="text-sm text-gray-400">No liquidity pool has been established for this token yet. Trading will be enabled once a pool is created.</p>
               )}
             </div>
           ) : (

@@ -467,8 +467,9 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
     )
   }
 
-  const isCreator = user?.user_metadata?.wallet_address === token.creator_wallet
-  const needsPool = !token.poolAddress && isCreator
+  // Remove creator check, only check if pool exists
+  const needsPool = !token.poolAddress
+
   return (
     <div className="space-y-4 sm:space-y-6 relative w-full max-w-[100vw] px-2 sm:px-4">
       {updating && !isTrading && (
@@ -520,7 +521,7 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
                   </div>
                 </div>
                 <div className="text-lg sm:text-2xl font-bold font-mono token-price transition-all duration-300 w-full sm:w-auto text-right">
-                  ${token.price.toLocaleString(undefined, { minimumFractionDigits: 10, maximumFractionDigits: 10 })}
+                  ${(token.price ?? 0).toLocaleString(undefined, { minimumFractionDigits: 10, maximumFractionDigits: 10 })}
                 </div>
               </div>
             </CardHeader>
