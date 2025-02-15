@@ -429,7 +429,7 @@ export default function CreateAgent() {
                   } catch (error) {
                     logger.error("Pool creation failed", error as Error);
                     toast.error(
-                      "Token created but pool creation failed. Send 0.12 SOL to your bonding curve account and try again from your agent page.", 
+                      "Token created", 
                       { id: toastId, duration: 8000 }
                     );
                     // Show bonding curve address for easy copy
