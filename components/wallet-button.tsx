@@ -8,7 +8,7 @@ import { useAuth } from "./providers/auth-provider"
 import { useState } from "react"
 import { toast } from "sonner"
 import { useWallet } from '@solana/wallet-adapter-react'
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
+import { WalletModalButton } from '@solana/wallet-adapter-react-ui'
 
 require('@solana/wallet-adapter-react-ui/styles.css')
 
@@ -97,6 +97,6 @@ export function WalletButton() {
     )
   }
 
-  return <WalletMultiButton className="wallet-button" />
+  return <WalletModalButton className="wallet-button">Select Wallet</WalletModalButton>
 }
 
