@@ -5,7 +5,6 @@ import { Coins, PlusCircle } from 'lucide-react'
 import Link from "next/link"
 import { WalletButton } from './wallet-button'
 import { Twitter, DiscIcon as Discord, Send } from 'lucide-react'
-import TokenTicker from "./nasdaq-banner"
 
 const SOCIALS = {
   twitter: 'https://twitter.com/swarms_corp',
