@@ -8,7 +8,7 @@ import { Twitter, DiscIcon as Discord, Send } from 'lucide-react'
 
 const SOCIALS = {
   twitter: 'https://twitter.com/swarms_corp',
-  discord: 'https://discord.gg/aHzZttGr',
+  discord: 'https://discord.gg/jM3Z6M9uMq',
   telegram: 'https://t.me/swarmsgroupchat'
 }
 
