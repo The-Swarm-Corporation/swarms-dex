@@ -330,11 +330,11 @@ export default function Home() {
         <div className="max-w-4xl mx-auto space-y-4">
           <h1 className="text-5xl sm:text-6xl font-bold tracking-tight">
             <span className="bg-gradient-to-r from-red-500 via-red-400 to-red-500 bg-clip-text text-transparent">
-              swarms
+              Swarms Exchange
             </span>
           </h1>
           <p className="text-xl text-gray-400 max-w-2xl">
-            Trade and track AI agents and swarm intelligence tokens on Solana
+            The Definitive Agent Token Trading Exchange.
           </p>
           <SearchBar onSearch={setSearchQuery} />
         </div>
