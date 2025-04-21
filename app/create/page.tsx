@@ -46,6 +46,8 @@ interface FormError {
 
 const SWARMS_TOKEN_ADDRESS = process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS as string
 const SWARMS_PUMP_ADDRESS = process.env.NEXT_PUBLIC_SWARMS_PLATFORM_TEST_ADDRESS as string
+const SWARMS_TREASURY_ADDRESS = process.env.NEXT_PUBLIC_DAO_TREASURY_ADDRESS as string
+
 const SWARMS_MINIMUM_BUY_IN = 1
 
 
@@ -247,7 +249,8 @@ export default function CreateAgent() {
         twitterHandle: formData.twitter || null,
         telegramGroup: formData.telegram || null,
         discordServer: formData.discord || null,
-        swarmsAmount: formData.swarmsAmount
+        swarmsAmount: formData.swarmsAmount,
+        treasuryAddress: SWARMS_TREASURY_ADDRESS
       }))
 
       // Get token creation transaction
@@ -293,13 +296,13 @@ export default function CreateAgent() {
                   const tokenTx = Transaction.from(Buffer.from(tokenCreationTx, 'base64'));
                   
                   // Log signature verification
-                  console.log('Transaction signers before user:', {
-                    feePayer: tokenTx.feePayer?.toBase58(),
-                    signatures: tokenTx.signatures.map(s => ({
-                      publicKey: s.publicKey.toBase58(),
-                      signature: s.signature ? 'signed' : 'unsigned'
-                    }))
-                  });
+                  // console.log('Transaction signers before user:', {
+                  //   feePayer: tokenTx.feePayer?.toBase58(),
+                  //   signatures: tokenTx.signatures.map(s => ({
+                  //     publicKey: s.publicKey.toBase58(),
+                  //     signature: s.signature ? 'signed' : 'unsigned'
+                  //   }))
+                  // });
 
                   try {
                     // Sign with the user's wallet using wallet adapter

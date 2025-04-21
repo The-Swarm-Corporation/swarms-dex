@@ -1,4 +1,4 @@
-import { Connection, PublicKey, Transaction, Keypair, SystemProgram, LAMPORTS_PER_SOL, TransactionInstruction } from "@solana/web3.js";
+import { Connection, PublicKey, Transaction, Keypair, SystemProgram, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { createClient } from "@supabase/supabase-js";
 import { 
   getAssociatedTokenAddress, 
@@ -377,16 +377,16 @@ export async function POST(req: Request) {
     // Simulate to get cost estimate
     const simulation = await connection.simulateTransaction(initPoolTx);
     
-    console.log('\nSimulation results:', {
-      error: simulation.value.err,
-      unitsConsumed: simulation.value.unitsConsumed,
-    });
+    // console.log('\nSimulation results:', {
+    //   error: simulation.value.err,
+    //   unitsConsumed: simulation.value.unitsConsumed,
+    // });
     
-    // Log all simulation logs without truncation
-    console.log('\nFull simulation logs:');
-    simulation.value.logs?.forEach((log, i) => {
-      console.log(`${i + 1}: ${log}`);
-    });
+    // // Log all simulation logs without truncation
+    // console.log('\nFull simulation logs:');
+    // simulation.value.logs?.forEach((log, i) => {
+    //   console.log(`${i + 1}: ${log}`);
+    // });
 
     // Calculate estimated fees for compute units
     const estimatedFee = simulation.value.unitsConsumed 
