@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
-import { getConnection } from '@/lib/solana'
+import { getConnection } from '@/config/solana'
 import { Connection } from '@solana/web3.js'
 
 interface SolanaContextType {
@@ -14,7 +14,7 @@ export function SolanaProvider({ children }: { children: ReactNode }) {
   const [connection, setConnection] = useState<Connection | null>(null)
 
   useEffect(() => {
-    const conn = getConnection()
+    const conn: any = getConnection()
     setConnection(conn)
   }, [])
 

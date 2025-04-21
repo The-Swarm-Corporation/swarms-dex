@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
+    "@jup-ag/core": "^4.0.0-beta.21",
     "@mercurial-finance/dynamic-amm-sdk": "^1.1.23",
     "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
     "@metaplex-foundation/umi": "^1.0.0",

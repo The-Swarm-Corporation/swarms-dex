@@ -11,6 +11,7 @@ declare global {
   interface Window {
     phantom?: {
       solana?: {
+        [x: string]: any
         signMessage(message: Uint8Array, encoding: string): Promise<{
           signature: Uint8Array;
           publicKey: PublicKey;

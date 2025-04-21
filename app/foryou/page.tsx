@@ -3,11 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { 
-  ChevronUp, 
-  ChevronDown, 
   ShoppingCart, 
   TrendingDown,
-  ArrowUpDown,
   ChevronUpIcon,
   ChevronDownIcon
 } from "lucide-react"
