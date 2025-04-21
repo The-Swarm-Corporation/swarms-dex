@@ -114,11 +114,6 @@ function TokenCard({ token }: { token: Web3Agent & {
                   </div>
                 </div>
               </div>
-              {token.is_swarm ? (
-                <Users className="h-6 w-6 text-red-500 group-hover:scale-110 transition-transform group-hover:drop-shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
-              ) : (
-                <Bot className="h-6 w-6 text-red-500 group-hover:scale-110 transition-transform group-hover:drop-shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
-              )}
             </div>
           </CardHeader>
           <CardContent className="relative z-10">
