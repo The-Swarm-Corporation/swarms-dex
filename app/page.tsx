@@ -313,7 +313,7 @@ export default function Home() {
                   </span>
                 </h1>
                 <p className="text-2xl text-gray-400 max-w-xl mb-12">
-                  The Definitive Agent Token Launchpad.
+                  Launch and Trade Agent Tokens
                 </p>
                 <div className="w-[120%]">
                   <SearchBar onSearch={setSearchQuery} />
