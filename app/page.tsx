@@ -238,7 +238,15 @@ export default function Home() {
             market_cap: marketData[token.mint_address]?.market_cap,
             price_change_24h: marketData[token.mint_address]?.price_change_24h
           }))
-          setTokens(updatedTokens)
+          
+          // Sort tokens by market cap for the top market cap section
+          const sortedByMarketCap = [...updatedTokens].sort((a, b) => {
+            const marketCapA = a.market?.stats?.marketCap || a.market_cap || 0
+            const marketCapB = b.market?.stats?.marketCap || b.market_cap || 0
+            return marketCapB - marketCapA
+          })
+          
+          setTokens(sortedByMarketCap)
         } else {
           setTokens(fetchedTokens)
         }
@@ -352,6 +360,19 @@ export default function Home() {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {trendingTokens.map((token) => (
+            <TokenCard key={token.id} token={token} />
+          ))}
+        </div>
+      </div>
+
+      {/* Top Market Cap Section */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <Star className="h-5 w-5 text-red-500" />
+          <h2 className="text-2xl font-semibold">Top by Market Cap</h2>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {tokens.slice(0, 6).map((token) => (
             <TokenCard key={token.id} token={token} />
           ))}
         </div>

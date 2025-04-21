@@ -18,7 +18,7 @@ export function NavBar() {
       <div className="container flex h-14 sm:h-16 items-center px-3 sm:px-4">
         <Link href="/" className="flex items-center space-x-2 hover:opacity-80 transition-opacity">
           <span className="text-xl sm:text-2xl font-bold text-red-600 tracking-tight">
-            swarms exchange
+            swarms launchpad
           </span>
         </Link>
 
@@ -27,7 +27,9 @@ export function NavBar() {
           <Link 
             href={SOCIALS.twitter} 
             target="_blank"
-            className="text-gray-400 hover:text-red-600 transition-colors p-1.5 hover:bg-red-600/10 rounded-full"
+            className="text-gray-400 hover:text-red-600 transition-colors p-1.5 hover:bg-red-600/10 rounded-full relative
+                     before:absolute before:inset-0 before:rounded-full before:border before:border-red-600/50 before:scale-0 
+                     hover:before:scale-100 before:transition-transform before:duration-300"
             aria-label="Twitter"
           >
             <Twitter className="h-4 w-4 sm:h-5 sm:w-5" />
@@ -35,7 +37,9 @@ export function NavBar() {
           <Link 
             href={SOCIALS.discord} 
             target="_blank"
-            className="text-gray-400 hover:text-red-600 transition-colors p-1.5 hover:bg-red-600/10 rounded-full"
+            className="text-gray-400 hover:text-red-600 transition-colors p-1.5 hover:bg-red-600/10 rounded-full relative
+                     before:absolute before:inset-0 before:rounded-full before:border before:border-red-600/50 before:scale-0 
+                     hover:before:scale-100 before:transition-transform before:duration-300"
             aria-label="Discord"
           >
             <Discord className="h-4 w-4 sm:h-5 sm:w-5" />
@@ -43,7 +47,9 @@ export function NavBar() {
           <Link 
             href={SOCIALS.telegram} 
             target="_blank"
-            className="text-gray-400 hover:text-red-600 transition-colors p-1.5 hover:bg-red-600/10 rounded-full"
+            className="text-gray-400 hover:text-red-600 transition-colors p-1.5 hover:bg-red-600/10 rounded-full relative
+                     before:absolute before:inset-0 before:rounded-full before:border before:border-red-600/50 before:scale-0 
+                     hover:before:scale-100 before:transition-transform before:duration-300"
             aria-label="Telegram"
           >
             <Send className="h-4 w-4 sm:h-5 sm:w-5" />
@@ -55,7 +61,9 @@ export function NavBar() {
           <Button 
             variant="ghost" 
             size="sm"
-            className="text-gray-400 hover:text-red-600 p-1.5 hover:bg-red-600/10 rounded-full"
+            className="text-gray-400 hover:text-red-600 p-1.5 hover:bg-red-600/10 rounded-full relative
+                     before:absolute before:inset-0 before:rounded-full before:border before:border-red-600/50 before:scale-0 
+                     hover:before:scale-100 before:transition-transform before:duration-300"
             onClick={() => window.open(SOCIALS.twitter, '_blank')}
             aria-label="Twitter"
           >
@@ -68,20 +76,32 @@ export function NavBar() {
           <Link href="/holdings">
             <Button 
               variant="outline" 
-              className="border-red-600/50 hover:border-red-600 hover:bg-red-600/20 text-red-600 transition-colors"
+              className="border-red-600/50 hover:border-red-600 hover:bg-red-600/20 text-red-600 transition-all duration-300
+                         relative overflow-hidden group
+                         before:absolute before:inset-0 before:border before:border-red-600/50 before:scale-x-0 before:opacity-0
+                         hover:before:scale-x-100 hover:before:opacity-100 before:transition-all before:duration-500
+                         after:absolute after:inset-0 after:border after:border-red-600/50 after:scale-y-0 after:opacity-0
+                         hover:after:scale-y-100 hover:after:opacity-100 after:transition-all after:duration-500
+                         shadow-[0_0_15px_rgba(220,38,38,0.1)] hover:shadow-[0_0_25px_rgba(220,38,38,0.2)]"
             >
-              <Coins className="h-4 w-4 mr-2" />
-              <span className="hidden sm:inline">Holdings</span>
+              <Coins className="h-4 w-4 mr-2 animate-pulse" />
+              <span className="hidden sm:inline relative z-10">Holdings</span>
             </Button>
           </Link>
           <WalletButton />
           <Link href="/create">
             <Button 
               variant="outline" 
-              className="border-red-600/50 hover:border-red-600 hover:bg-red-600/20 text-red-600 transition-colors"
+              className="border-red-600/50 hover:border-red-600 hover:bg-red-600/20 text-red-600 transition-all duration-300
+                         relative overflow-hidden group
+                         before:absolute before:inset-0 before:border before:border-red-600/50 before:scale-x-0 before:opacity-0
+                         hover:before:scale-x-100 hover:before:opacity-100 before:transition-all before:duration-500
+                         after:absolute after:inset-0 after:border after:border-red-600/50 after:scale-y-0 after:opacity-0
+                         hover:after:scale-y-100 hover:after:opacity-100 after:transition-all after:duration-500
+                         shadow-[0_0_15px_rgba(220,38,38,0.1)] hover:shadow-[0_0_25px_rgba(220,38,38,0.2)]"
             >
-              <PlusCircle className="h-4 w-4 mr-0 sm:mr-2" />
-              <span className="hidden sm:inline">Create Token</span>
+              <PlusCircle className="h-4 w-4 mr-0 sm:mr-2 animate-pulse" />
+              <span className="hidden sm:inline relative z-10">Create Token</span>
             </Button>
           </Link>
         </div>
@@ -94,10 +114,16 @@ export function NavBar() {
             <Button 
               variant="outline" 
               size="sm"
-              className="border-red-600/50 hover:border-red-600 hover:bg-red-600/20 text-red-600 transition-colors h-9 px-2.5"
+              className="border-red-600/50 hover:border-red-600 hover:bg-red-600/20 text-red-600 transition-all duration-300
+                         relative overflow-hidden group h-9 px-2.5
+                         before:absolute before:inset-0 before:border before:border-red-600/50 before:scale-x-0 before:opacity-0
+                         hover:before:scale-x-100 hover:before:opacity-100 before:transition-all before:duration-500
+                         after:absolute after:inset-0 after:border after:border-red-600/50 after:scale-y-0 after:opacity-0
+                         hover:after:scale-y-100 hover:after:opacity-100 after:transition-all after:duration-500
+                         shadow-[0_0_15px_rgba(220,38,38,0.1)] hover:shadow-[0_0_25px_rgba(220,38,38,0.2)]"
               aria-label="Holdings"
             >
-              <Coins className="h-4 w-4" />
+              <Coins className="h-4 w-4 animate-pulse" />
             </Button>
           </Link>
           <WalletButton />
@@ -105,10 +131,16 @@ export function NavBar() {
             <Button 
               variant="outline" 
               size="sm"
-              className="border-red-600/50 hover:border-red-600 hover:bg-red-600/20 text-red-600 transition-colors h-9 px-2.5"
+              className="border-red-600/50 hover:border-red-600 hover:bg-red-600/20 text-red-600 transition-all duration-300
+                         relative overflow-hidden group h-9 px-2.5
+                         before:absolute before:inset-0 before:border before:border-red-600/50 before:scale-x-0 before:opacity-0
+                         hover:before:scale-x-100 hover:before:opacity-100 before:transition-all before:duration-500
+                         after:absolute after:inset-0 after:border after:border-red-600/50 after:scale-y-0 after:opacity-0
+                         hover:after:scale-y-100 hover:after:opacity-100 after:transition-all after:duration-500
+                         shadow-[0_0_15px_rgba(220,38,38,0.1)] hover:shadow-[0_0_25px_rgba(220,38,38,0.2)]"
               aria-label="Create Token"
             >
-              <PlusCircle className="h-4 w-4" />
+              <PlusCircle className="h-4 w-4 animate-pulse" />
             </Button>
           </Link>
         </div>
