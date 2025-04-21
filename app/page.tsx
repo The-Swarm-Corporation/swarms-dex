@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Bot, ExternalLink, Star, Flame, Loader2, Share2, Copy, Twitter } from "lucide-react"
+import { Bot, ExternalLink, Star, Flame, Loader2, Share2, Copy, Twitter, DiscIcon as Discord, Send } from "lucide-react"
 import Link from "next/link"
 import { listTokens, getTrendingTokens } from "@/lib/api"
 import type { Web3Agent } from "@/lib/supabase/types"
@@ -314,8 +314,6 @@ export default function Home() {
         </div>
       </div>
 
-
-
       {/* Top Market Cap Section */}
       <div className="space-y-4">
         <div className="flex items-center gap-2">
@@ -389,6 +387,50 @@ export default function Home() {
           )}
         </Tabs>
       )}
+
+      {/* Ending Section */}
+      <div className="mt-20 mb-12">
+        <Card className="w-full bg-gradient-to-br from-black via-red-950/20 to-black border-[1px] border-red-500/20 hover:border-red-500/40 transition-all duration-300 overflow-hidden relative">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-red-500/20 via-transparent to-transparent opacity-50"></div>
+          <div className="relative z-10 p-8 md:p-12">
+            <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-center mb-6 bg-gradient-to-r from-red-500 via-red-400 to-red-500 bg-clip-text text-transparent">
+              Let's Automate the World Economy
+            </h2>
+            <p className="text-gray-400 text-center max-w-2xl mx-auto mb-8">
+              Join us in building the future of automated finance. Connect, collaborate, and create with Swarms.
+            </p>
+            <div className="flex justify-center items-center space-x-6">
+              <Link 
+                href="https://twitter.com/swarms_corp" 
+                target="_blank"
+                className="text-gray-400 hover:text-red-500 transition-colors p-2 hover:bg-red-500/10 rounded-full relative
+                         before:absolute before:inset-0 before:rounded-full before:border before:border-red-500/50 before:scale-0 
+                         hover:before:scale-100 before:transition-transform before:duration-300"
+              >
+                <Twitter className="h-6 w-6" />
+              </Link>
+              <Link 
+                href="https://discord.gg/jM3Z6M9uMq" 
+                target="_blank"
+                className="text-gray-400 hover:text-red-500 transition-colors p-2 hover:bg-red-500/10 rounded-full relative
+                         before:absolute before:inset-0 before:rounded-full before:border before:border-red-500/50 before:scale-0 
+                         hover:before:scale-100 before:transition-transform before:duration-300"
+              >
+                <Discord className="h-6 w-6" />
+              </Link>
+              <Link 
+                href="https://t.me/swarmsgroupchat" 
+                target="_blank"
+                className="text-gray-400 hover:text-red-500 transition-colors p-2 hover:bg-red-500/10 rounded-full relative
+                         before:absolute before:inset-0 before:rounded-full before:border before:border-red-500/50 before:scale-0 
+                         hover:before:scale-100 before:transition-transform before:duration-300"
+              >
+                <Send className="h-6 w-6" />
+              </Link>
+            </div>
+          </div>
+        </Card>
+      </div>
     </div>
   )
 }
