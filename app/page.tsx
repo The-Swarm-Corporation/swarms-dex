@@ -349,18 +349,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Trending Section */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Flame className="h-5 w-5 text-red-500" />
-          <h2 className="text-2xl font-semibold">Trending</h2>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {trendingTokens.map((token) => (
-            <TokenCard key={token.id} token={token} />
-          ))}
-        </div>
-      </div>
+
 
       {/* Top Market Cap Section */}
       <div className="space-y-4">
