@@ -18,10 +18,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={inter.className} suppressHydrationWarning>
+      <body className={`${inter.className} bg-black`} suppressHydrationWarning>
         <WalletProviders>
           <AuthProvider>
-            <div className="min-h-screen bg-black text-white">
+            <div className="min-h-screen bg-black text-white overflow-x-hidden">
               <NavBar />
               <main className="container mx-auto pt-20 px-4">
                 {children}
