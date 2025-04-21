@@ -43,16 +43,31 @@ function TokenCard({ token }: { token: Web3Agent & {
 
   // Format price with proper decimals
   const formatPrice = (price: number | null | undefined) => {
-    if (!price) return "0.0000"
+    if (!price) return "0.00"
+    if (price < 0.01) {
+      return price.toLocaleString(undefined, {
+        minimumFractionDigits: 8,
+        maximumFractionDigits: 8
+      })
+    }
     return price.toLocaleString(undefined, {
-      minimumFractionDigits: 13,
-      maximumFractionDigits: 13
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4
     })
   }
 
-  // Format volume and market cap with comma separators
+  // Format volume and market cap with comma separators and abbreviations
   const formatValue = (value: number | null | undefined) => {
     if (!value) return "0"
+    if (value >= 1e9) {
+      return `${(value / 1e9).toFixed(2)}B`
+    }
+    if (value >= 1e6) {
+      return `${(value / 1e6).toFixed(2)}M`
+    }
+    if (value >= 1e3) {
+      return `${(value / 1e3).toFixed(2)}K`
+    }
     return value.toLocaleString(undefined, {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
@@ -65,12 +80,13 @@ function TokenCard({ token }: { token: Web3Agent & {
   return (
     <>
       <Link href={`/agent/${token.mint_address}`} className="block">
-        <Card className="group bg-black/50 border-red-500/20 hover:border-red-500/40 transition-all hover:scale-[1.02] hover:shadow-lg hover:shadow-red-500/10">
-          <CardHeader>
+        <Card className="group relative bg-black border-[1px] border-red-500/20 hover:border-red-500/40 transition-all duration-300 hover:scale-[1.02] before:absolute before:inset-0 before:p-[1px] before:bg-gradient-to-r before:from-red-500/50 before:via-transparent before:to-red-500/50 before:rounded-lg before:-z-10 after:absolute after:inset-0 after:p-[1px] after:bg-gradient-to-b after:from-red-500/50 after:via-transparent after:to-red-500/50 after:rounded-lg after:-z-10">
+          <div className="absolute inset-0 bg-gradient-to-br from-black via-black/95 to-red-950/10 rounded-lg z-0"></div>
+          <CardHeader className="relative z-10">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 {token.image_url && (
-                  <div className="w-12 h-12 rounded-lg overflow-hidden bg-black/20">
+                  <div className="w-12 h-12 rounded-lg overflow-hidden bg-black/20 ring-1 ring-red-500/20 shadow-lg shadow-red-500/10">
                     <img 
                       src={token.image_url} 
                       alt={`${token.name} logo`}
@@ -79,22 +95,17 @@ function TokenCard({ token }: { token: Web3Agent & {
                   </div>
                 )}
                 <div className="space-y-1">
-                  <h2 className="text-xl font-bold group-hover:text-red-500 transition-colors">
+                  <h2 className="text-xl font-bold group-hover:text-red-500 transition-colors relative">
                     {token.name}
-                    {token.is_verified && (
-                      <Badge variant="secondary" className="ml-2">
-                        Verified
-                      </Badge>
-                    )}
                   </h2>
                   <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="w-fit">
+                    <Badge variant="outline" className="w-fit border-red-500/20 text-red-400 bg-red-500/5">
                       {token.token_symbol}
                     </Badge>
                     {token.price_change_24h !== undefined && (
                       <Badge
                         variant={token.price_change_24h >= 0 ? "default" : "destructive"}
-                        className={`${token.price_change_24h >= 0 ? "bg-green-500/20 text-green-500 hover:bg-green-500/30" : ""}`}
+                        className={`${token.price_change_24h >= 0 ? "bg-green-500/10 text-green-400 border-green-500/20" : "bg-red-500/10 text-red-400 border-red-500/20"}`}
                       >
                         {token.price_change_24h >= 0 ? "+" : ""}
                         {token.price_change_24h.toFixed(2)}%
@@ -104,37 +115,37 @@ function TokenCard({ token }: { token: Web3Agent & {
                 </div>
               </div>
               {token.is_swarm ? (
-                <Users className="h-6 w-6 text-red-500 group-hover:scale-110 transition-transform" />
+                <Users className="h-6 w-6 text-red-500 group-hover:scale-110 transition-transform group-hover:drop-shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
               ) : (
-                <Bot className="h-6 w-6 text-red-500 group-hover:scale-110 transition-transform" />
+                <Bot className="h-6 w-6 text-red-500 group-hover:scale-110 transition-transform group-hover:drop-shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
               )}
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="relative z-10">
             <p className="text-gray-400 mb-4 line-clamp-2">{token.description}</p>
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <div className="text-sm text-gray-400">Price</div>
-                <div className="font-mono text-lg">${formatPrice(token.market?.stats?.price || token.current_price)}</div>
+              <div className="space-y-2 p-3 rounded-lg bg-gradient-to-br from-black/80 to-red-950/10 border border-red-500/10">
+                <div className="text-sm text-red-400">Price</div>
+                <div className="font-mono text-lg text-white/90">${formatPrice(token.market?.stats?.price || token.current_price)}</div>
               </div>
-              <div className="space-y-2">
-                <div className="text-sm text-gray-400">Volume 24h</div>
-                <div className="font-mono text-lg">${formatValue(token.market?.stats?.volume24h || token.volume_24h)}</div>
+              <div className="space-y-2 p-3 rounded-lg bg-gradient-to-br from-black/80 to-red-950/10 border border-red-500/10">
+                <div className="text-sm text-red-400">Volume 24h</div>
+                <div className="font-mono text-lg text-white/90">${formatValue(token.market?.stats?.volume24h || token.volume_24h)}</div>
               </div>
-              <div className="space-y-2">
-                <div className="text-sm text-gray-400">Market Cap</div>
-                <div className="font-mono text-lg">${formatValue(marketCap)}</div>
+              <div className="space-y-2 p-3 rounded-lg bg-gradient-to-br from-black/80 to-red-950/10 border border-red-500/10">
+                <div className="text-sm text-red-400">Market Cap</div>
+                <div className="font-mono text-lg text-white/90">${formatValue(marketCap)}</div>
               </div>
             </div>
           </CardContent>
-          <CardFooter>
+          <CardFooter className="relative z-10">
             <div className="flex items-center gap-4 w-full">
               {token.twitter_handle && (
                 <Button
                   variant="ghost"
                   size="lg"
                   onClick={(e) => e.stopPropagation()}
-                  className="relative z-10 px-4 py-6 text-gray-400 hover:text-red-500 hover:bg-red-500/10 rounded-xl"
+                  className="relative px-4 py-6 text-red-400 hover:text-red-500 hover:bg-red-500/10 rounded-xl border border-red-500/20 hover:border-red-500/40 transition-colors"
                 >
                   <Link
                     href={`https://twitter.com/${token.twitter_handle}`}
@@ -154,7 +165,7 @@ function TokenCard({ token }: { token: Web3Agent & {
                   e.stopPropagation();
                   setShareModalOpen(true);
                 }}
-                className="relative z-10 ml-auto px-4 py-6 text-gray-400 hover:text-red-500 hover:bg-red-500/10 rounded-xl"
+                className="relative ml-auto px-4 py-6 text-red-400 hover:text-red-500 hover:bg-red-500/10 rounded-xl border border-red-500/20 hover:border-red-500/40 transition-colors"
               >
                 <Share2 className="h-8 w-8" />
               </Button>
@@ -317,11 +328,9 @@ export default function Home() {
   }, [debouncedSearch])
 
   const agents = tokens.filter((token) => !token.is_swarm)
-  const swarms = tokens.filter((token) => token.is_swarm)
 
   const paginatedTokens = paginateTokens(tokens)
   const paginatedAgents = paginateTokens(agents)
-  const paginatedSwarms = paginateTokens(swarms)
 
   return (
     <div className="space-y-8">
@@ -330,11 +339,11 @@ export default function Home() {
         <div className="max-w-4xl mx-auto space-y-4">
           <h1 className="text-5xl sm:text-6xl font-bold tracking-tight">
             <span className="bg-gradient-to-r from-red-500 via-red-400 to-red-500 bg-clip-text text-transparent">
-              Swarms Exchange
+              Swarms Launchpad
             </span>
           </h1>
           <p className="text-xl text-gray-400 max-w-2xl">
-            The Definitive Agent Token Trading Exchange.
+            The Definitive Agent Token Launchpad.
           </p>
           <SearchBar onSearch={setSearchQuery} />
         </div>
@@ -372,10 +381,6 @@ export default function Home() {
               <Bot className="h-4 w-4 mr-2" />
               Agents ({agents.length})
             </TabsTrigger>
-            <TabsTrigger value="swarms" className="data-[state=active]:bg-red-500">
-              <Users className="h-4 w-4 mr-2" />
-              Swarms ({swarms.length})
-            </TabsTrigger>
           </TabsList>
 
           {loading ? (
@@ -411,21 +416,6 @@ export default function Home() {
                   </>
                 ) : (
                   <div className="text-center py-12 text-gray-400">No agents found matching your search</div>
-                )}
-              </TabsContent>
-
-              <TabsContent value="swarms" className="mt-6">
-                {swarms.length > 0 ? (
-                  <>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                      {paginatedSwarms.map((token) => (
-                        <TokenCard key={token.id} token={token} />
-                      ))}
-                    </div>
-                    {renderPagination(swarms.length)}
-                  </>
-                ) : (
-                  <div className="text-center py-12 text-gray-400">No swarms found matching your search</div>
                 )}
               </TabsContent>
             </>
