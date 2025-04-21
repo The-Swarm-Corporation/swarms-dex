@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { OrderBook } from '@/components/order-book'
 import { MarketStats } from '@/components/market-stats'
-import { TradingViewChart } from '@/components/trading-view-chart'
+import { GeckoTerminalChart } from '@/components/gecko-terminal-chart'
 import { TokenTradingPanel } from '@/components/token-trading-panel'
 import { Bot, Users, ArrowLeft, ExternalLink, Share2 } from 'lucide-react'
 import { MarketData } from '@/lib/market'
@@ -533,12 +533,8 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
           {/* Chart */}
           <Card className="bg-black/50 border-red-600/20 overflow-hidden">
             <CardContent className="p-0">
-              <TradingViewChart 
-                data={token.market?.transactions ? transformTransactionsToOHLCV(
-                  token.market.transactions,
-                  token.market.stats?.price || 0
-                ) : null} 
-                symbol={token.token_symbol} 
+              <GeckoTerminalChart 
+                poolAddress={token.poolAddress || ''} 
               />
             </CardContent>
           </Card>
