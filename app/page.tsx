@@ -1,10 +1,10 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
+import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Bot, ExternalLink, Star, Flame, Loader2, Share2, Copy, Twitter, DiscIcon as Discord, Send } from "lucide-react"
+import { Bot, Star, Loader2, Share2, Copy, Twitter, DiscIcon as Discord, Send } from "lucide-react"
 import Link from "next/link"
 import { listTokens, getTrendingTokens } from "@/lib/api"
 import type { Web3Agent } from "@/lib/supabase/types"
