@@ -79,8 +79,8 @@ function TokenCard({ token }: { token: Web3Agent & {
 
   return (
     <>
-      <Link href={`/agent/${token.mint_address}`} className="block">
-        <Card className="group relative bg-black border-[1px] border-red-500/20 hover:border-red-500/40 transition-all duration-300 hover:scale-[1.02] before:absolute before:inset-0 before:p-[1px] before:bg-gradient-to-r before:from-red-500/50 before:via-transparent before:to-red-500/50 before:rounded-lg before:-z-10 after:absolute after:inset-0 after:p-[1px] after:bg-gradient-to-b after:from-red-500/50 after:via-transparent after:to-red-500/50 after:rounded-lg after:-z-10">
+      <Card className="group relative bg-black border-[1px] border-red-500/20 hover:border-red-500/40 transition-all duration-300 hover:scale-[1.02] before:absolute before:inset-0 before:p-[1px] before:bg-gradient-to-r before:from-red-500/50 before:via-transparent before:to-red-500/50 before:rounded-lg before:-z-10 after:absolute after:inset-0 after:p-[1px] after:bg-gradient-to-b after:from-red-500/50 after:via-transparent after:to-red-500/50 after:rounded-lg after:-z-10">
+        <Link href={`/agent/${token.mint_address}`}>
           <div className="absolute inset-0 bg-gradient-to-br from-black via-black/95 to-red-950/10 rounded-lg z-0"></div>
           <CardHeader className="relative z-10">
             <div className="flex items-center justify-between">
@@ -133,41 +133,38 @@ function TokenCard({ token }: { token: Web3Agent & {
               </div>
             </div>
           </CardContent>
-          <CardFooter className="relative z-10">
-            <div className="flex items-center gap-4 w-full">
-              {token.twitter_handle && (
-                <Button
-                  variant="ghost"
-                  size="lg"
-                  onClick={(e) => e.stopPropagation()}
-                  className="relative px-4 py-6 text-red-400 hover:text-red-500 hover:bg-red-500/10 rounded-xl border border-red-500/20 hover:border-red-500/40 transition-colors"
-                >
-                  <Link
-                    href={`https://twitter.com/${token.twitter_handle}`}
-                    target="_blank"
-                    className="flex items-center justify-center"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <ExternalLink className="h-8 w-8" />
-                  </Link>
-                </Button>
-              )}
+        </Link>
+        <CardFooter className="relative z-10">
+          <div className="flex items-center gap-4 w-full">
+            {token.twitter_handle && (
               <Button
                 variant="ghost"
                 size="lg"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  setShareModalOpen(true);
+                  window.open(`https://twitter.com/${token.twitter_handle}`, '_blank');
                 }}
-                className="relative ml-auto px-4 py-6 text-red-400 hover:text-red-500 hover:bg-red-500/10 rounded-xl border border-red-500/20 hover:border-red-500/40 transition-colors"
+                className="relative px-4 py-6 text-red-400 hover:text-red-500 hover:bg-red-500/10 rounded-xl border border-red-500/20 hover:border-red-500/40 transition-colors"
               >
-                <Share2 className="h-8 w-8" />
+                <ExternalLink className="h-8 w-8" />
               </Button>
-            </div>
-          </CardFooter>
-        </Card>
-      </Link>
+            )}
+            <Button
+              variant="ghost"
+              size="lg"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setShareModalOpen(true);
+              }}
+              className="relative ml-auto px-4 py-6 text-red-400 hover:text-red-500 hover:bg-red-500/10 rounded-xl border border-red-500/20 hover:border-red-500/40 transition-colors"
+            >
+              <Share2 className="h-8 w-8" />
+            </Button>
+          </div>
+        </CardFooter>
+      </Card>
       <ShareModal 
         isOpen={shareModalOpen}
         onClose={() => setShareModalOpen(false)}

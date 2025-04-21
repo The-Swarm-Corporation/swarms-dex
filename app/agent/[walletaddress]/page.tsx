@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { OrderBook } from '@/components/order-book'
 import { MarketStats } from '@/components/market-stats'
-import { GeckoTerminalChart } from '@/components/gecko-terminal-chart'
+import { TradingViewChart } from '@/components/trading-view-chart'
 import { TokenTradingPanel } from '@/components/token-trading-panel'
 import { Bot, Users, ArrowLeft, ExternalLink, Share2 } from 'lucide-react'
 import { MarketData } from '@/lib/market'
@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import type { Web3Agent } from "@/lib/supabase/types"
 import { Comments } from '@/components/comments'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { GeckoTerminalChart } from '@/components/gecko-terminal-chart'
 
 interface TokenDetails {
   mint_address: string
@@ -533,9 +534,15 @@ export default function TokenPage({ params }: { params: { walletaddress: string 
           {/* Chart */}
           <Card className="bg-black/50 border-red-600/20 overflow-hidden">
             <CardContent className="p-0">
-              <GeckoTerminalChart 
-                poolAddress={token.poolAddress || ''} 
-              />
+              {token.pool_address ? (
+                <GeckoTerminalChart 
+                  poolAddress={token.pool_address} 
+                />
+              ) : (
+                <div className="flex items-center justify-center h-[600px] text-gray-400">
+                  No pool data available
+                </div>
+              )}
             </CardContent>
           </Card>
 
