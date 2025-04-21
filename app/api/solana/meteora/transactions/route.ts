@@ -145,20 +145,6 @@ export function parseSwapTransaction(
   }
 }
 
-// Helper to find the user from balance changes
-function findUserFromBalances(
-  isBuy: boolean,
-  tokenBalances: { pre: any[], post: any[] },
-  swarmsBalances: { pre: any[], post: any[] },
-  vaultAddresses: { tokenVault: string, swarmsVault: string }
-): string {
-  const relevantBalances = isBuy ? tokenBalances : swarmsBalances
-  const nonVaultBalances = relevantBalances.post.filter(b => 
-    b.owner !== vaultAddresses.tokenVault && 
-    b.owner !== vaultAddresses.swarmsVault
-  )
-  return nonVaultBalances[0]?.owner || 'unknown'
-}
 
 interface Transaction {
   signature: string
@@ -169,10 +155,6 @@ interface Transaction {
   isSwap: boolean
 }
 
-interface CachedTransactionData {
-  data: Transaction[]
-  updated_at: string
-}
 
 async function getLatestTransactions(
   connection: Connection,
