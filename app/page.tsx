@@ -21,6 +21,7 @@ import {
   PaginationNext, 
   PaginationPrevious 
 } from "@/components/ui/pagination"
+import { AgentSimulation } from "./components/AgentSimulation"
 
 function TokenCard({ token }: { token: Web3Agent & { 
   price_change_24h?: number
@@ -300,17 +301,30 @@ export default function Home() {
   return (
     <div className="space-y-8">
       {/* Hero Section */}
-      <div className="relative -mx-4 -mt-20 px-4 pt-32 pb-16 bg-gradient-to-b from-red-500/10 via-purple-500/5 to-transparent">
-        <div className="max-w-4xl mx-auto space-y-4">
-          <h1 className="text-5xl sm:text-6xl font-bold tracking-tight">
-            <span className="bg-gradient-to-r from-red-500 via-red-400 to-red-500 bg-clip-text text-transparent">
-              Swarms Launchpad
-            </span>
-          </h1>
-          <p className="text-xl text-gray-400 max-w-2xl">
-            The Definitive Agent Token Launchpad.
-          </p>
-          <SearchBar onSearch={setSearchQuery} />
+      <div className="relative -mx-4 -mt-20 px-4 pt-24 pb-24">
+        <div className="max-w-[95%] mx-auto">
+          <Card className="relative overflow-hidden bg-black/40 border-red-500/30 hover:border-red-500/50 transition-all duration-500
+                         before:absolute before:inset-0 before:bg-gradient-to-r before:from-red-500/20 before:via-transparent before:to-red-500/20 before:animate-pulse">
+            <div className="relative z-20 px-12 py-24">
+              <div className="max-w-2xl relative z-10">
+                <h1 className="text-6xl sm:text-7xl font-bold tracking-tight mb-8">
+                  <span className="bg-gradient-to-r from-red-500 via-red-400 to-red-500 bg-clip-text text-transparent">
+                    Swarms Launchpad
+                  </span>
+                </h1>
+                <p className="text-2xl text-gray-400 max-w-xl mb-12">
+                  The Definitive Agent Token Launchpad.
+                </p>
+                <div className="w-[120%]">
+                  <SearchBar onSearch={setSearchQuery} />
+                </div>
+              </div>
+            </div>
+            <div className="absolute inset-0 z-10">
+              <AgentSimulation />
+            </div>
+            <div className="absolute inset-0 bg-gradient-to-r from-black via-black/20 to-transparent z-10" />
+          </Card>
         </div>
       </div>
 
