@@ -35,12 +35,6 @@ function TokenCard({ token }: { token: Web3Agent & {
 } }) {
   const [shareModalOpen, setShareModalOpen] = useState(false)
 
-  const priceChangeColor = token.price_change_24h
-    ? token.price_change_24h > 0
-      ? "text-green-500"
-      : "text-red-500"
-    : "text-gray-400"
-
   // Format price with proper decimals
   const formatPrice = (price: number | null | undefined) => {
     if (!price) return "0.00"
@@ -56,25 +50,15 @@ function TokenCard({ token }: { token: Web3Agent & {
     })
   }
 
-  // Format volume and market cap with comma separators and abbreviations
-  const formatValue = (value: number | null | undefined) => {
-    if (!value) return "0"
-    if (value >= 1e9) {
-      return `${(value / 1e9).toFixed(2)}B`
-    }
-    if (value >= 1e6) {
-      return `${(value / 1e6).toFixed(2)}M`
-    }
-    if (value >= 1e3) {
-      return `${(value / 1e3).toFixed(2)}K`
-    }
-    return value.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    })
+  // Simplified market cap formatter
+  const formatMarketCap = (value: number | null | undefined) => {
+    const numValue = Number(value) || 0
+    if (numValue >= 1e9) return `${(numValue / 1e9).toFixed(1)}B`
+    if (numValue >= 1e6) return `${(numValue / 1e6).toFixed(1)}M`
+    if (numValue >= 1e3) return `${(numValue / 1e3).toFixed(1)}K`
+    return numValue.toFixed(1)
   }
 
-  // Get the most up-to-date market cap value
   const marketCap = token.market?.stats?.marketCap || token.market_cap || 0
 
   return (
@@ -82,88 +66,69 @@ function TokenCard({ token }: { token: Web3Agent & {
       <Card className="group relative bg-black border-[1px] border-red-500/20 hover:border-red-500/40 transition-all duration-300 hover:scale-[1.02] before:absolute before:inset-0 before:p-[1px] before:bg-gradient-to-r before:from-red-500/50 before:via-transparent before:to-red-500/50 before:rounded-lg before:-z-10 after:absolute after:inset-0 after:p-[1px] after:bg-gradient-to-b after:from-red-500/50 after:via-transparent after:to-red-500/50 after:rounded-lg after:-z-10">
         <Link href={`/agent/${token.mint_address}`}>
           <div className="absolute inset-0 bg-gradient-to-br from-black via-black/95 to-red-950/10 rounded-lg z-0"></div>
-          <CardHeader className="relative z-10">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                {token.image_url && (
-                  <div className="w-12 h-12 rounded-lg overflow-hidden bg-black/20 ring-1 ring-red-500/20 shadow-lg shadow-red-500/10">
-                    <img 
-                      src={token.image_url} 
-                      alt={`${token.name} logo`}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                )}
-                <div className="space-y-1">
-                  <h2 className="text-xl font-bold group-hover:text-red-500 transition-colors relative">
+          <div className="p-4 relative z-10">
+            <div className="flex items-start gap-3">
+              {token.image_url && (
+                <div className="w-12 h-12 rounded-lg overflow-hidden bg-black/20 ring-1 ring-red-500/20 shadow-lg shadow-red-500/10 flex-shrink-0">
+                  <img 
+                    src={token.image_url} 
+                    alt={`${token.name} logo`}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="text-lg font-bold group-hover:text-red-500 transition-colors truncate">
                     {token.name}
                   </h2>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="w-fit border-red-500/20 text-red-400 bg-red-500/5">
-                      {token.token_symbol}
+                  <div className="flex items-center gap-1">
+                    <Badge variant="outline" className="text-xs border-red-500/20 text-red-400 bg-red-500/5">
+                      MC: ${formatMarketCap(marketCap)}
                     </Badge>
-                    {token.price_change_24h !== undefined && (
-                      <Badge
-                        variant={token.price_change_24h >= 0 ? "default" : "destructive"}
-                        className={`${token.price_change_24h >= 0 ? "bg-green-500/10 text-green-400 border-green-500/20" : "bg-red-500/10 text-red-400 border-red-500/20"}`}
-                      >
-                        {token.price_change_24h >= 0 ? "+" : ""}
-                        {token.price_change_24h.toFixed(2)}%
-                      </Badge>
-                    )}
                   </div>
+                </div>
+                <div className="flex items-center gap-2 mt-1">
+                  <Badge variant="outline" className="w-fit border-red-500/20 text-red-400 bg-red-500/5">
+                    ${formatPrice(token.market?.stats?.price || token.current_price)}
+                  </Badge>
+                  {token.price_change_24h !== undefined && (
+                    <Badge
+                      variant={token.price_change_24h >= 0 ? "default" : "destructive"}
+                      className={`${token.price_change_24h >= 0 ? "bg-green-500/10 text-green-400 border-green-500/20" : "bg-red-500/10 text-red-400 border-red-500/20"}`}
+                    >
+                      {token.price_change_24h >= 0 ? "+" : ""}
+                      {token.price_change_24h.toFixed(2)}%
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-sm text-gray-400 mt-2 mb-3 line-clamp-2">{token.description}</p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setShareModalOpen(true);
+                    }}
+                    className="flex-1 h-8 text-red-400 hover:text-white border-red-500/20 hover:border-red-500 hover:bg-red-500/20 transition-colors"
+                  >
+                    <Share2 className="h-4 w-4 mr-2" />
+                    Share
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1 h-8 text-red-400 hover:text-white border-red-500/20 hover:border-red-500 hover:bg-red-500/20 transition-colors"
+                  >
+                    Trade
+                  </Button>
                 </div>
               </div>
             </div>
-          </CardHeader>
-          <CardContent className="relative z-10">
-            <p className="text-gray-400 mb-4 line-clamp-2">{token.description}</p>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2 p-3 rounded-lg bg-gradient-to-br from-black/80 to-red-950/10 border border-red-500/10">
-                <div className="text-sm text-red-400">Price</div>
-                <div className="font-mono text-lg text-white/90">${formatPrice(token.market?.stats?.price || token.current_price)}</div>
-              </div>
-              <div className="space-y-2 p-3 rounded-lg bg-gradient-to-br from-black/80 to-red-950/10 border border-red-500/10">
-                <div className="text-sm text-red-400">Volume 24h</div>
-                <div className="font-mono text-lg text-white/90">${formatValue(token.market?.stats?.volume24h || token.volume_24h)}</div>
-              </div>
-              <div className="space-y-2 p-3 rounded-lg bg-gradient-to-br from-black/80 to-red-950/10 border border-red-500/10">
-                <div className="text-sm text-red-400">Market Cap</div>
-                <div className="font-mono text-lg text-white/90">${formatValue(marketCap)}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Link>
-        <CardFooter className="relative z-10">
-          <div className="flex items-center gap-4 w-full">
-            {token.twitter_handle && (
-              <Button
-                variant="ghost"
-                size="lg"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  window.open(`https://twitter.com/${token.twitter_handle}`, '_blank');
-                }}
-                className="relative px-4 py-6 text-red-400 hover:text-red-500 hover:bg-red-500/10 rounded-xl border border-red-500/20 hover:border-red-500/40 transition-colors"
-              >
-                <ExternalLink className="h-8 w-8" />
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="lg"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setShareModalOpen(true);
-              }}
-              className="relative ml-auto px-4 py-6 text-red-400 hover:text-red-500 hover:bg-red-500/10 rounded-xl border border-red-500/20 hover:border-red-500/40 transition-colors"
-            >
-              <Share2 className="h-8 w-8" />
-            </Button>
           </div>
-        </CardFooter>
+        </Link>
       </Card>
       <ShareModal 
         isOpen={shareModalOpen}
