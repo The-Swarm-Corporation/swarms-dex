@@ -64,8 +64,7 @@ async function simulatePoolCreationCost(
     new BN(baseTokenAccount.value.amount),  // Use actual token amount
     new BN(quoteTokenAccount.value.amount), // Use actual SWARMS amount
     {
-      tradeFeeNumerator: new BN(2500),     // 2.5% fee (250 bps)
-      tradeFeeDenominator: new BN(10000),  // Standard basis points denominator
+      tradeFeeNumerator: 0,     // 0% fee
       activationType: 1,                    // 1 = Timestamp activation
       activationPoint: null,                // Will activate immediately since null
       hasAlphaVault: false,
@@ -311,24 +310,11 @@ export async function POST(req: Request) {
     const baseAmount = new BN(baseTokenAccount.value.amount);  // Exact base token amount
     const quoteAmount = new BN(remainingAmount);  // Exact remaining SWARMS after fee
 
-    console.log('\nPool creation parameters:', {
-      baseToken: tokenMint,
-      baseDecimals,
-      baseAmount: baseAmount.toString(),
-      quoteToken: SWARMS_TOKEN_ADDRESS.toString(),
-      quoteDecimals,
-      quoteAmount: quoteAmount.toString(),
-      baseAmountInBN: baseAmount instanceof BN ? 'Valid BN' : 'Not BN',
-      quoteAmountInBN: quoteAmount instanceof BN ? 'Valid BN' : 'Not BN',
-      baseTokenBalance: baseTokenAccount.value.uiAmount,
-      quoteTokenBalance: quoteTokenAccount.value.uiAmount,
-      remainingQuoteBalance: Number(remainingAmount) / (10 ** quoteDecimals)
-    });
 
     // Create customization parameters
     const customizeParam = {
-      tradeFeeNumerator: new BN(2500),     // 2.5% fee (250 bps)
-      tradeFeeDenominator: new BN(10000),  // Standard basis points denominator
+      tradeFeeNumerator: 0,     // 0% fee
+      tradeFeeDenominator: 10000,  // Standard basis points denominator
       activationType: 1,                    // 1 = Timestamp activation
       activationPoint: null,                // Will activate immediately since null
       hasAlphaVault: false,
@@ -415,13 +401,13 @@ export async function POST(req: Request) {
       );
 
       if (isInsufficientFunds) {
-        console.log('SOL balance details:', {
-          currentBalance: `${currentBalance.toFixed(6)} SOL`,
-          totalRequired: `${totalRequired.toFixed(6)} SOL`,
-          neededAmount: `${neededAmount.toFixed(6)} SOL`,
-          estimatedFee: `${estimatedFee.toFixed(6)} SOL`,
-          rentExempt: `${(totalRentExempt / LAMPORTS_PER_SOL).toFixed(6)} SOL`
-        });
+        // console.log('SOL balance details:', {
+        //   currentBalance: `${currentBalance.toFixed(6)} SOL`,
+        //   totalRequired: `${totalRequired.toFixed(6)} SOL`,
+        //   neededAmount: `${neededAmount.toFixed(6)} SOL`,
+        //   estimatedFee: `${estimatedFee.toFixed(6)} SOL`,
+        //   rentExempt: `${(totalRentExempt / LAMPORTS_PER_SOL).toFixed(6)} SOL`
+        // });
 
         // Create funding transaction with exact needed amount
         const fundingTx = new Transaction();

@@ -5,10 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { OrderBook } from '@/components/order-book'
 import { MarketStats } from '@/components/market-stats'
-import { TradingViewChart } from '@/components/trading-view-chart'
 import { TokenTradingPanel } from '@/components/token-trading-panel'
 import { Bot, Users, ArrowLeft, ExternalLink, Share2 } from 'lucide-react'
-import { MarketData } from '@/lib/market'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/providers/auth-provider'
@@ -104,108 +102,6 @@ export interface APIErrorResponse {
     status: string;
     title: string;
   }>;
-}
-
-interface GetTokenPricesParams {
-  network: string;
-  addresses: string[];
-  includeMarketCap?: boolean;
-  include24hrVol?: boolean;
-}
-
-/**
- * Retrieves current USD token prices from the GeckoTerminal API.
- *
- * @param params - Parameters for the API request.
- * @returns A promise that resolves with the token price data.
- * @throws An error if the request fails or if more than 30 addresses are provided.
- */
-function transformTransactionsToOHLCV(transactions: Array<{
-  signature: string
-  price: number // This is price in SWARMS
-  size: number
-  side: 'buy' | 'sell'
-  timestamp: number
-}>, swarmsPrice: number = 0): MarketData {
-  if (!transactions || transactions.length === 0) {
-    return {
-      price: 0,
-      volume24h: 0,
-      marketCap: 0,
-      highPrice24h: 0,
-      lowPrice24h: 0,
-      priceHistory: []
-    }
-  }
-
-  // Sort transactions by timestamp
-  const sortedTx = [...transactions].sort((a, b) => a.timestamp - b.timestamp)
-  const firstTime = sortedTx[0].timestamp
-  const lastTime = sortedTx[sortedTx.length - 1].timestamp
-  const timeframe = 3600000 // 1 hour in milliseconds
-
-  // Create time buckets for each hour
-  const buckets: { [key: number]: typeof sortedTx } = {}
-  for (let time = firstTime; time <= lastTime; time += timeframe) {
-    buckets[time] = []
-  }
-
-  // Group transactions into hourly buckets
-  sortedTx.forEach(tx => {
-    const bucketTime = Math.floor(tx.timestamp / timeframe) * timeframe
-    if (!buckets[bucketTime]) {
-      buckets[bucketTime] = []
-    }
-    buckets[bucketTime].push({
-      ...tx,
-      price: tx.price // Keep price in SWARMS, don't multiply by swarmsPrice
-    })
-  })
-
-  // Calculate OHLCV for each bucket and ensure ascending order
-  const priceHistory = Object.entries(buckets)
-    .sort(([timeA], [timeB]) => parseInt(timeA) - parseInt(timeB))
-    .map(([time, txs]) => {
-      if (txs.length === 0) {
-        // Use the last known price for empty buckets
-        const lastKnownPrice = sortedTx.find(tx => tx.timestamp < parseInt(time))?.price || 0
-        return {
-          time: new Date(parseInt(time)),
-          open: lastKnownPrice,
-          high: lastKnownPrice,
-          low: lastKnownPrice,
-          close: lastKnownPrice,
-          volume: 0
-        }
-      }
-
-      const prices = txs.map(tx => tx.price)
-      const volume = txs.reduce((sum, tx) => sum + (tx.price * tx.size), 0)
-
-      return {
-        time: new Date(parseInt(time)),
-        open: txs[0].price,
-        high: Math.max(...prices),
-        low: Math.min(...prices),
-        close: txs[txs.length - 1].price,
-        volume
-      }
-    })
-
-  // Calculate 24h stats
-  const now = Date.now()
-  const last24hTx = sortedTx.filter(tx => tx.timestamp > now - 24 * 3600000)
-  const prices24h = last24hTx.map(tx => tx.price)
-  const volume24h = last24hTx.reduce((sum, tx) => sum + (tx.price * tx.size), 0)
-
-  return {
-    price: sortedTx[sortedTx.length - 1]?.price || 0,
-    volume24h,
-    marketCap: 0,
-    highPrice24h: prices24h.length > 0 ? Math.max(...prices24h) : 0,
-    lowPrice24h: prices24h.length > 0 ? Math.min(...prices24h) : 0,
-    priceHistory
-  }
 }
 
 function calculatePriceChange24h(transactions: Array<{

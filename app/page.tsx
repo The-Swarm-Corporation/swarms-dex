@@ -66,10 +66,10 @@ function TokenCard({ token }: { token: Web3Agent & {
       <Card className="group relative bg-black border-[1px] border-red-500/20 hover:border-red-500/40 transition-all duration-300 hover:scale-[1.02] before:absolute before:inset-0 before:p-[1px] before:bg-gradient-to-r before:from-red-500/50 before:via-transparent before:to-red-500/50 before:rounded-lg before:-z-10 after:absolute after:inset-0 after:p-[1px] after:bg-gradient-to-b after:from-red-500/50 after:via-transparent after:to-red-500/50 after:rounded-lg after:-z-10">
         <Link href={`/agent/${token.mint_address}`}>
           <div className="absolute inset-0 bg-gradient-to-br from-black via-black/95 to-red-950/10 rounded-lg z-0"></div>
-          <div className="p-4 relative z-10">
-            <div className="flex items-start gap-3">
+          <div className="p-3 sm:p-4 relative z-10">
+            <div className="flex items-start gap-2 sm:gap-3">
               {token.image_url && (
-                <div className="w-12 h-12 rounded-lg overflow-hidden bg-black/20 ring-1 ring-red-500/20 shadow-lg shadow-red-500/10 flex-shrink-0">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg overflow-hidden bg-black/20 ring-1 ring-red-500/20 shadow-lg shadow-red-500/10 flex-shrink-0">
                   <img 
                     src={token.image_url} 
                     alt={`${token.name} logo`}
@@ -78,32 +78,32 @@ function TokenCard({ token }: { token: Web3Agent & {
                 </div>
               )}
               <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-2">
-                  <h2 className="text-lg font-bold group-hover:text-red-500 transition-colors truncate">
+                <div className="flex items-center justify-between gap-1 sm:gap-2">
+                  <h2 className="text-base sm:text-lg font-bold group-hover:text-red-500 transition-colors truncate">
                     {token.name}
                   </h2>
                   <div className="flex items-center gap-1">
-                    <Badge variant="outline" className="text-xs border-red-500/20 text-red-400 bg-red-500/5">
+                    <Badge variant="outline" className="text-[10px] sm:text-xs border-red-500/20 text-red-400 bg-red-500/5">
                       MC: ${formatMarketCap(marketCap)}
                     </Badge>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 mt-1">
-                  <Badge variant="outline" className="w-fit border-red-500/20 text-red-400 bg-red-500/5">
+                <div className="flex flex-wrap items-center gap-1 sm:gap-2 mt-0.5 sm:mt-1">
+                  <Badge variant="outline" className="w-fit border-red-500/20 text-red-400 bg-red-500/5 text-[10px] sm:text-xs">
                     ${formatPrice(token.market?.stats?.price || token.current_price)}
                   </Badge>
                   {token.price_change_24h !== undefined && (
                     <Badge
                       variant={token.price_change_24h >= 0 ? "default" : "destructive"}
-                      className={`${token.price_change_24h >= 0 ? "bg-green-500/10 text-green-400 border-green-500/20" : "bg-red-500/10 text-red-400 border-red-500/20"}`}
+                      className={`text-[10px] sm:text-xs ${token.price_change_24h >= 0 ? "bg-green-500/10 text-green-400 border-green-500/20" : "bg-red-500/10 text-red-400 border-red-500/20"}`}
                     >
                       {token.price_change_24h >= 0 ? "+" : ""}
                       {token.price_change_24h.toFixed(2)}%
                     </Badge>
                   )}
                 </div>
-                <p className="text-sm text-gray-400 mt-2 mb-3 line-clamp-2">{token.description}</p>
-                <div className="flex items-center gap-2">
+                <p className="text-xs sm:text-sm text-gray-400 mt-1.5 sm:mt-2 mb-2 sm:mb-3 line-clamp-2">{token.description}</p>
+                <div className="flex items-center gap-1.5 sm:gap-2">
                   <Button
                     variant="outline"
                     size="sm"
@@ -112,15 +112,15 @@ function TokenCard({ token }: { token: Web3Agent & {
                       e.stopPropagation();
                       setShareModalOpen(true);
                     }}
-                    className="flex-1 h-8 text-red-400 hover:text-white border-red-500/20 hover:border-red-500 hover:bg-red-500/20 transition-colors"
+                    className="flex-1 h-7 sm:h-8 text-xs sm:text-sm text-red-400 hover:text-white border-red-500/20 hover:border-red-500 hover:bg-red-500/20 transition-colors"
                   >
-                    <Share2 className="h-4 w-4 mr-2" />
+                    <Share2 className="h-3 w-3 sm:h-4 sm:w-4 mr-1.5 sm:mr-2" />
                     Share
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
-                    className="flex-1 h-8 text-red-400 hover:text-white border-red-500/20 hover:border-red-500 hover:bg-red-500/20 transition-colors"
+                    className="flex-1 h-7 sm:h-8 text-xs sm:text-sm text-red-400 hover:text-white border-red-500/20 hover:border-red-500 hover:bg-red-500/20 transition-colors"
                   >
                     Trade
                   </Button>
@@ -240,10 +240,10 @@ export default function Home() {
         if (
           i === 1 ||
           i === totalPages ||
-          (i >= currentPage - 2 && i <= currentPage + 2)
+          (i >= currentPage - 1 && i <= currentPage + 1)
         ) {
           pages.push(i)
-        } else if (i === currentPage - 3 || i === currentPage + 3) {
+        } else if (i === currentPage - 2 || i === currentPage + 2) {
           pages.push('...')
         }
       }
@@ -251,24 +251,24 @@ export default function Home() {
     }
 
     return (
-      <Pagination className="mt-8">
-        <PaginationContent>
+      <Pagination className="mt-6 sm:mt-8">
+        <PaginationContent className="gap-1 sm:gap-2">
           <PaginationItem>
             <PaginationPrevious
               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              className={currentPage === 1 ? "pointer-events-none opacity-50" : ""}
+              className={`h-8 sm:h-9 min-w-[70px] sm:min-w-[85px] text-xs sm:text-sm ${currentPage === 1 ? "pointer-events-none opacity-50" : ""}`}
             />
           </PaginationItem>
           
           {getPageNumbers().map((page, idx) => (
-            <PaginationItem key={idx}>
+            <PaginationItem key={idx} className="hidden sm:block">
               {page === '...' ? (
-                <PaginationLink className="pointer-events-none">...</PaginationLink>
+                <PaginationLink className="pointer-events-none h-8 sm:h-9 w-8 sm:w-9 text-xs sm:text-sm">...</PaginationLink>
               ) : (
                 <PaginationLink
                   onClick={() => setCurrentPage(page as number)}
                   isActive={currentPage === page}
-                  className={currentPage === page ? "bg-red-500 text-white hover:bg-red-600" : ""}
+                  className={`h-8 sm:h-9 w-8 sm:w-9 text-xs sm:text-sm ${currentPage === page ? "bg-red-500 text-white hover:bg-red-600" : ""}`}
                 >
                   {page}
                 </PaginationLink>
@@ -279,7 +279,7 @@ export default function Home() {
           <PaginationItem>
             <PaginationNext
               onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-              className={currentPage === totalPages ? "pointer-events-none opacity-50" : ""}
+              className={`h-8 sm:h-9 min-w-[70px] sm:min-w-[85px] text-xs sm:text-sm ${currentPage === totalPages ? "pointer-events-none opacity-50" : ""}`}
             />
           </PaginationItem>
         </PaginationContent>
@@ -300,21 +300,21 @@ export default function Home() {
   return (
     <div className="space-y-8">
       {/* Hero Section */}
-      <div className="relative -mx-4 -mt-20 px-4 pt-24 pb-24">
+      <div className="relative -mx-2 sm:-mx-4 -mt-16 sm:-mt-20 px-2 sm:px-4 pt-20 sm:pt-24 pb-20 sm:pb-24">
         <div className="max-w-[95%] mx-auto">
           <Card className="relative overflow-hidden bg-black/40 border-red-500/30 hover:border-red-500/50 transition-all duration-500
                          before:absolute before:inset-0 before:bg-gradient-to-r before:from-red-500/20 before:via-transparent before:to-red-500/20 before:animate-pulse">
-            <div className="relative z-20 px-12 py-24">
+            <div className="relative z-20 px-4 sm:px-8 md:px-12 py-16 sm:py-20 md:py-24">
               <div className="max-w-2xl relative z-10">
-                <h1 className="text-6xl sm:text-7xl font-bold tracking-tight mb-8">
+                <h1 className="text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight mb-4 sm:mb-8">
                   <span className="bg-gradient-to-r from-red-500 via-red-400 to-red-500 bg-clip-text text-transparent">
                     Swarms Launchpad
                   </span>
                 </h1>
-                <p className="text-2xl text-gray-400 max-w-xl mb-12">
+                <p className="text-lg sm:text-xl md:text-2xl text-gray-400 max-w-xl mb-8 sm:mb-12">
                   Launch and Trade Agent Tokens
                 </p>
-                <div className="w-[120%]">
+                <div className="w-full sm:w-[120%]">
                   <SearchBar onSearch={setSearchQuery} />
                 </div>
               </div>
@@ -328,7 +328,7 @@ export default function Home() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-[95%] mx-auto -mt-12 mb-12 relative z-20">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6 md:gap-8 max-w-[95%] mx-auto -mt-8 sm:-mt-12 mb-8 sm:mb-12 relative z-20">
         <Card className="group relative overflow-hidden bg-black/40 border border-red-500/10 hover:border-red-500/30 transition-all duration-500 hover:scale-[1.02] hover:-translate-y-1
                        before:absolute before:inset-0 before:bg-gradient-radial before:from-red-500/10 before:via-transparent before:to-transparent before:opacity-0 before:group-hover:opacity-100 before:transition-all before:duration-500
                        after:absolute after:inset-0 after:bg-gradient-to-b after:from-black/80 after:via-black/20 after:to-black/80 after:rounded-lg">
@@ -397,12 +397,12 @@ export default function Home() {
       </div>
 
       {/* Top Market Cap Section */}
-      <div className="space-y-4">
+      <div className="space-y-3 sm:space-y-4">
         <div className="flex items-center gap-2">
-          <Star className="h-5 w-5 text-red-500" />
-          <h2 className="text-2xl font-semibold">Top by Market Cap</h2>
+          <Star className="h-4 w-4 sm:h-5 sm:w-5 text-red-500" />
+          <h2 className="text-xl sm:text-2xl font-semibold">Top by Market Cap</h2>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
           {tokens.slice(0, 6).map((token) => (
             <TokenCard key={token.id} token={token} />
           ))}
@@ -411,7 +411,7 @@ export default function Home() {
 
       {/* Main Content */}
       {error ? (
-        <div className="text-center py-12">
+        <div className="text-center py-8 sm:py-12">
           <div className="text-red-500 mb-2">{error}</div>
           <button onClick={() => window.location.reload()} className="text-red-500 hover:text-red-400 underline">
             Try again
@@ -419,27 +419,27 @@ export default function Home() {
         </div>
       ) : (
         <Tabs defaultValue="all" className="w-full">
-          <TabsList className="grid w-full grid-cols-3 bg-black/50">
-            <TabsTrigger value="all" className="data-[state=active]:bg-red-500">
-              <Star className="h-4 w-4 mr-2" />
+          <TabsList className="grid w-full grid-cols-2 bg-black/50 rounded-lg p-1">
+            <TabsTrigger value="all" className="data-[state=active]:bg-red-500 text-sm sm:text-base">
+              <Star className="h-3.5 w-3.5 sm:h-4 sm:w-4 mr-1.5 sm:mr-2" />
               All ({tokens.length})
             </TabsTrigger>
-            <TabsTrigger value="agents" className="data-[state=active]:bg-red-500">
-              <Bot className="h-4 w-4 mr-2" />
+            <TabsTrigger value="agents" className="data-[state=active]:bg-red-500 text-sm sm:text-base">
+              <Bot className="h-3.5 w-3.5 sm:h-4 sm:w-4 mr-1.5 sm:mr-2" />
               Agents ({agents.length})
             </TabsTrigger>
           </TabsList>
 
           {loading ? (
-            <div className="flex justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-red-500" />
+            <div className="flex justify-center py-8 sm:py-12">
+              <Loader2 className="h-6 w-6 sm:h-8 sm:w-8 animate-spin text-red-500" />
             </div>
           ) : (
             <>
-              <TabsContent value="all" className="mt-6">
+              <TabsContent value="all" className="mt-4 sm:mt-6">
                 {tokens.length > 0 ? (
                   <>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                       {paginatedTokens.map((token) => (
                         <TokenCard key={token.id} token={token} />
                       ))}
@@ -447,14 +447,16 @@ export default function Home() {
                     {renderPagination(tokens.length)}
                   </>
                 ) : (
-                  <div className="text-center py-12 text-gray-400">No tokens found matching your search</div>
+                  <div className="text-center py-8 sm:py-12 text-gray-400 text-sm sm:text-base">
+                    No tokens found matching your search
+                  </div>
                 )}
               </TabsContent>
 
-              <TabsContent value="agents" className="mt-6">
+              <TabsContent value="agents" className="mt-4 sm:mt-6">
                 {agents.length > 0 ? (
                   <>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                       {paginatedAgents.map((token) => (
                         <TokenCard key={token.id} token={token} />
                       ))}
@@ -462,7 +464,9 @@ export default function Home() {
                     {renderPagination(agents.length)}
                   </>
                 ) : (
-                  <div className="text-center py-12 text-gray-400">No agents found matching your search</div>
+                  <div className="text-center py-8 sm:py-12 text-gray-400 text-sm sm:text-base">
+                    No agents found matching your search
+                  </div>
                 )}
               </TabsContent>
             </>
@@ -471,43 +475,46 @@ export default function Home() {
       )}
 
       {/* Ending Section */}
-      <div className="mt-20 mb-12">
+      <div className="mt-16 sm:mt-20 mb-8 sm:mb-12">
         <Card className="w-full bg-gradient-to-br from-black via-red-950/20 to-black border-[1px] border-red-500/20 hover:border-red-500/40 transition-all duration-300 overflow-hidden relative">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-red-500/20 via-transparent to-transparent opacity-50"></div>
-          <div className="relative z-10 p-8 md:p-12">
-            <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-center mb-6 bg-gradient-to-r from-red-500 via-red-400 to-red-500 bg-clip-text text-transparent">
+          <div className="relative z-10 p-6 sm:p-8 md:p-12">
+            <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold text-center mb-4 sm:mb-6 bg-gradient-to-r from-red-500 via-red-400 to-red-500 bg-clip-text text-transparent">
               Let's Automate the World Economy
             </h2>
-            <p className="text-gray-400 text-center max-w-2xl mx-auto mb-8">
+            <p className="text-sm sm:text-base text-gray-400 text-center max-w-2xl mx-auto mb-6 sm:mb-8">
               Join us in building the future of automated finance. Connect, collaborate, and create with Swarms.
             </p>
-            <div className="flex justify-center items-center space-x-6">
+            <div className="flex justify-center items-center gap-3 sm:gap-6">
               <Link 
                 href="https://twitter.com/swarms_corp" 
                 target="_blank"
-                className="text-gray-400 hover:text-red-500 transition-colors p-2 hover:bg-red-500/10 rounded-full relative
+                className="text-gray-400 hover:text-red-500 transition-colors p-1.5 sm:p-2 hover:bg-red-500/10 rounded-full relative
                          before:absolute before:inset-0 before:rounded-full before:border before:border-red-500/50 before:scale-0 
                          hover:before:scale-100 before:transition-transform before:duration-300"
               >
-                <Twitter className="h-6 w-6" />
+                <Twitter className="h-4 w-4 sm:h-6 sm:w-6" />
+                <span className="sr-only">Twitter</span>
               </Link>
               <Link 
                 href="https://discord.gg/jM3Z6M9uMq" 
                 target="_blank"
-                className="text-gray-400 hover:text-red-500 transition-colors p-2 hover:bg-red-500/10 rounded-full relative
+                className="text-gray-400 hover:text-red-500 transition-colors p-1.5 sm:p-2 hover:bg-red-500/10 rounded-full relative
                          before:absolute before:inset-0 before:rounded-full before:border before:border-red-500/50 before:scale-0 
                          hover:before:scale-100 before:transition-transform before:duration-300"
               >
-                <Discord className="h-6 w-6" />
+                <Discord className="h-4 w-4 sm:h-6 sm:w-6" />
+                <span className="sr-only">Discord</span>
               </Link>
               <Link 
                 href="https://t.me/swarmsgroupchat" 
                 target="_blank"
-                className="text-gray-400 hover:text-red-500 transition-colors p-2 hover:bg-red-500/10 rounded-full relative
+                className="text-gray-400 hover:text-red-500 transition-colors p-1.5 sm:p-2 hover:bg-red-500/10 rounded-full relative
                          before:absolute before:inset-0 before:rounded-full before:border before:border-red-500/50 before:scale-0 
                          hover:before:scale-100 before:transition-transform before:duration-300"
               >
-                <Send className="h-6 w-6" />
+                <Send className="h-4 w-4 sm:h-6 sm:w-6" />
+                <span className="sr-only">Telegram</span>
               </Link>
             </div>
           </div>
