@@ -42,6 +42,14 @@ export interface Web3Agent {
   creator?: Web3User
   prices?: AgentPrice[]
   trades?: AgentTrade[]
+  market?: {
+    stats?: {
+      price: number
+      volume24h: number
+      apy: number
+      marketCap: number
+    }
+  }
 }
 
 export interface AgentTrade {

@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Bot, Star, Loader2, Share2, Copy, Twitter, DiscIcon as Discord, Send } from "lucide-react"
+import { Bot, Star, Loader2, Share2, Copy, Twitter, DiscIcon as Discord, Send, TrendingUp, Wallet, Users } from "lucide-react"
 import Link from "next/link"
 import { listTokens, getTrendingTokens } from "@/lib/api"
 import type { Web3Agent } from "@/lib/supabase/types"
@@ -24,7 +24,6 @@ import {
 import { AgentSimulation } from "./components/AgentSimulation"
 
 function TokenCard({ token }: { token: Web3Agent & { 
-  price_change_24h?: number
   market?: {
     stats?: {
       price: number
@@ -326,6 +325,75 @@ export default function Home() {
             <div className="absolute inset-0 bg-gradient-to-r from-black via-black/20 to-transparent z-10" />
           </Card>
         </div>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-[95%] mx-auto -mt-12 mb-12 relative z-20">
+        <Card className="group relative overflow-hidden bg-black/40 border border-red-500/10 hover:border-red-500/30 transition-all duration-500 hover:scale-[1.02] hover:-translate-y-1
+                       before:absolute before:inset-0 before:bg-gradient-radial before:from-red-500/10 before:via-transparent before:to-transparent before:opacity-0 before:group-hover:opacity-100 before:transition-all before:duration-500
+                       after:absolute after:inset-0 after:bg-gradient-to-b after:from-black/80 after:via-black/20 after:to-black/80 after:rounded-lg">
+          <div className="relative z-10 p-8">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-3 rounded-xl bg-gradient-to-br from-red-500/20 to-transparent">
+                <Wallet className="w-6 h-6 text-red-400" />
+              </div>
+              <h3 className="text-gray-300 font-medium">Total Market Cap</h3>
+            </div>
+            <div className="flex flex-col gap-2">
+              <div className="text-4xl font-bold bg-gradient-to-br from-red-400 via-red-300 to-red-500 bg-clip-text text-transparent transition-all duration-300 group-hover:text-glow-red">
+                ${tokens.reduce((acc, token) => {
+                  const marketCap = token.market?.stats?.marketCap || token.market_cap || 0
+                  return acc + marketCap
+                }, 0).toLocaleString()}
+              </div>
+              <p className="text-sm text-gray-500/80">Combined value of all tokens</p>
+            </div>
+          </div>
+          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-t from-transparent via-red-500/[0.02] to-transparent" />
+        </Card>
+
+        <Card className="group relative overflow-hidden bg-black/40 border border-red-500/10 hover:border-red-500/30 transition-all duration-500 hover:scale-[1.02] hover:-translate-y-1
+                       before:absolute before:inset-0 before:bg-gradient-radial before:from-red-500/10 before:via-transparent before:to-transparent before:opacity-0 before:group-hover:opacity-100 before:transition-all before:duration-500
+                       after:absolute after:inset-0 after:bg-gradient-to-b after:from-black/80 after:via-black/20 after:to-black/80 after:rounded-lg">
+          <div className="relative z-10 p-8">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-3 rounded-xl bg-gradient-to-br from-red-500/20 to-transparent">
+                <TrendingUp className="w-6 h-6 text-red-400" />
+              </div>
+              <h3 className="text-gray-300 font-medium">24h Volume</h3>
+            </div>
+            <div className="flex flex-col gap-2">
+              <div className="text-4xl font-bold bg-gradient-to-br from-red-400 via-red-300 to-red-500 bg-clip-text text-transparent transition-all duration-300 group-hover:text-glow-red">
+                ${tokens.reduce((acc, token) => {
+                  const volume = token.market?.stats?.volume24h || token.volume_24h || 0
+                  return acc + volume
+                }, 0).toLocaleString()}
+              </div>
+              <p className="text-sm text-gray-500/80">Total trading volume (24h)</p>
+            </div>
+          </div>
+          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-t from-transparent via-red-500/[0.02] to-transparent" />
+        </Card>
+
+        <Card className="group relative overflow-hidden bg-black/40 border border-red-500/10 hover:border-red-500/30 transition-all duration-500 hover:scale-[1.02] hover:-translate-y-1
+                       before:absolute before:inset-0 before:bg-gradient-radial before:from-red-500/10 before:via-transparent before:to-transparent before:opacity-0 before:group-hover:opacity-100 before:transition-all before:duration-500
+                       after:absolute after:inset-0 after:bg-gradient-to-b after:from-black/80 after:via-black/20 after:to-black/80 after:rounded-lg">
+          <div className="relative z-10 p-8">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-3 rounded-xl bg-gradient-to-br from-red-500/20 to-transparent">
+                <Users className="w-6 h-6 text-red-400" />
+              </div>
+              <h3 className="text-gray-300 font-medium">Total Agents</h3>
+            </div>
+            <div className="flex flex-col gap-2">
+              <div className="text-4xl font-bold bg-gradient-to-br from-red-400 via-red-300 to-red-500 bg-clip-text text-transparent transition-all duration-300 group-hover:text-glow-red">
+                {agents.length.toLocaleString()}
+              </div>
+              <p className="text-sm text-gray-500/80">Active trading agents</p>
+            </div>
+          </div>
+          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-t from-transparent via-red-500/[0.02] to-transparent" />
+        </Card>
       </div>
 
       {/* Top Market Cap Section */}
