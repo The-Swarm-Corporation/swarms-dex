@@ -13,7 +13,6 @@ import { AlertCircle, ImageIcon, Loader2 } from "lucide-react"
 import { logActivity } from "@/lib/supabase/logging"
 import { useAuth } from "@/components/providers/auth-provider"
 import { useRouter } from "next/navigation"
-import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, getAccount, createTransferInstruction, getOrCreateAssociatedTokenAccount } from "@solana/spl-token"
 import { PublicKey, Transaction } from "@solana/web3.js"
 import { useWallet } from '@solana/wallet-adapter-react'
 
@@ -48,7 +47,6 @@ interface FormError {
 const SWARMS_TOKEN_ADDRESS = process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS as string
 const SWARMS_PUMP_ADDRESS = process.env.NEXT_PUBLIC_SWARMS_PLATFORM_TEST_ADDRESS as string
 const SWARMS_MINIMUM_BUY_IN = 1
-const MIN_SOL_REQUIREMENT = 0.075 // Increased to 0.075 SOL to ensure sufficient balance
 export default function CreateAgent() {
   const router = useRouter()
   const { user, loading: authLoading } = useAuth()
@@ -229,25 +227,11 @@ export default function CreateAgent() {
       }
 
       const { sol, swarms } = await balanceResponse.json()
+      console.log("Balances:", { sol, swarms })
 
       // Verify minimum SOL
-      if (sol < MIN_SOL_REQUIREMENT) {
-        toast.error(
-          <div className="space-y-2">
-            <div>Insufficient SOL Balance</div>
-            <div className="text-sm">
-              <div>Required: {MIN_SOL_REQUIREMENT} SOL</div>
-              <div>Current: {sol.toFixed(4)} SOL</div>
-              <div>Missing: {(MIN_SOL_REQUIREMENT - sol).toFixed(4)} SOL</div>
-            </div>
-            <div className="text-xs text-gray-400 mt-1">
-              Please add more SOL to your wallet to cover transaction fees and account creation costs.
-            </div>
-          </div>,
-          { duration: 6000 }
-        )
-        setIsLoading(false)
-        return
+      if (sol < 0.05) {
+        throw new Error(`Insufficient SOL balance. You need at least 0.05 SOL (current: ${sol.toFixed(4)} SOL)`)
       }
 
       // Call the mint-token API with form data and image
@@ -305,6 +289,15 @@ export default function CreateAgent() {
 
                   // Sign token creation transaction
                   const tokenTx = Transaction.from(Buffer.from(tokenCreationTx, 'base64'));
+                  
+                  // Log signature verification
+                  console.log('Transaction signers before user:', {
+                    feePayer: tokenTx.feePayer?.toBase58(),
+                    signatures: tokenTx.signatures.map(s => ({
+                      publicKey: s.publicKey.toBase58(),
+                      signature: s.signature ? 'signed' : 'unsigned'
+                    }))
+                  });
 
                   try {
                     // Sign with the user's wallet using wallet adapter
@@ -341,36 +334,103 @@ export default function CreateAgent() {
                       mint: tokenMint
                     })
             
-                    // Show success message with token details
-                    toast.success(
-                      <div className="space-y-4">
-                        <div className="font-semibold">Token Created Successfully! 🎉</div>
-                        <div className="space-y-2 text-xs">
-                          <div className="bg-black/20 p-2 rounded space-y-1">
-                            <div>Name: {formData.name}</div>
-                            <div>Symbol: {formData.tokenSymbol}</div>
+                    // Automatically create pool
+                    toast.loading("Creating liquidity pool...", { id: toastId })
+            
+                    try {
+                      // First check if we have enough SOL for pool creation
+                      const poolSimResponse = await fetch('/api/solana/create-pool', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          tokenMint,
+                          userPublicKey: publicKey.toString(),
+                          createPool: false // Just simulate first
+                        })
+                      });
+            
+                      if (!poolSimResponse.ok) {
+                        const error = await poolSimResponse.json();
+                        throw new Error(error.error || 'Failed to simulate pool creation');
+                      }
+            
+                      const simResult = await poolSimResponse.json();
+                      
+                      // If we need more SOL, show the transfer UI
+                      if (!simResult.readyToProceed) {
+                        toast.error(
+                          `Pool creation needs ${simResult.recommendedSol.toFixed(4)} SOL. Please send SOL to your bonding curve account and try again from your agent page.`, 
+                          { id: toastId, duration: 8000 }
+                        );
+                        // Show bonding curve address for easy copy
+                        toast.info(
+                          <div className="mt-2 text-xs font-mono break-all">
+                            <div>Bonding Curve Address:</div>
+                            <div>{bondingCurveAddress}</div>
+                          </div>,
+                          { duration: 15000 }
+                        );
+                        router.push(`/agent/${tokenMint}`);
+                        return;
+                      }
+            
+                      // If we have enough SOL, proceed with pool creation
+                      const poolResponse = await fetch('/api/solana/create-pool', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          tokenMint,
+                          userPublicKey: publicKey.toString(),
+                          createPool: true
+                        })
+                      });
+            
+                      if (!poolResponse.ok) {
+                        const error = await poolResponse.json();
+                        throw new Error(error.error || 'Failed to create pool');
+                      }
+            
+                      const { signature: poolSignature, poolAddress } = await poolResponse.json();
+            
+                      toast.success("Agent created successfully!", { 
+                        id: toastId,
+                        duration: 5000,
+                        description: (
+                          <div className="mt-2 text-xs font-mono break-all">
+                            <div>Token: {formData.tokenSymbol}</div>
+                            <div>Pool: {poolAddress}</div>
                             <div>
                               <a
-                                href={`https://explorer.solana.com/tx/${tokenSignature}`}
+                                href={`https://explorer.solana.com/tx/${poolSignature}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-blue-500 hover:text-blue-600"
                               >
-                                View Transaction
+                                View Pool Creation
                               </a>
                             </div>
                           </div>
-                        </div>
-                      </div>,
-                      { 
-                        id: toastId,
-                        duration: 8000
-                      }
+                        ),
+                      });
+            
+                      router.push(`/agent/${tokenMint}`);
+                                
+                  } catch (error) {
+                    logger.error("Pool creation failed", error as Error);
+                    toast.error(
+                      "Token created", 
+                      { id: toastId, duration: 8000 }
                     );
-
-                    // Navigate to the agent page
+                    // Show bonding curve address for easy copy
+                    toast.info(
+                      <div className="mt-2 text-xs font-mono break-all">
+                        <div>Bonding Curve Address:</div>
+                        <div>{bondingCurveAddress}</div>
+                      </div>,
+                      { duration: 15000 }
+                    );
                     router.push(`/agent/${tokenMint}`);
-
+                  }
                   } catch (error) {
                     if (error instanceof Error && error.message.includes('User rejected')) {
                       toast.error("Transaction was rejected by user", { id: toastId });
@@ -450,7 +510,7 @@ export default function CreateAgent() {
             <h3 className="text-sm font-semibold text-red-500">Requirements</h3>
             <ul className="mt-2 text-sm text-gray-200 space-y-1">
               <li>• Minimum {SWARMS_MINIMUM_BUY_IN.toLocaleString()} SWARMS tokens required</li>
-              <li>• Minimum {MIN_SOL_REQUIREMENT} SOL for transaction fees and account creation</li>
+              <li>• Minimum 0.05 SOL for transaction fees</li>
               <li>• Connected Phantom wallet</li>
             </ul>
             <p className="mt-4 text-sm text-gray-200">
