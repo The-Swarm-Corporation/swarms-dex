@@ -53,7 +53,7 @@ const TokenGallery: React.FC = () => {
         throw new Error('Invalid holdings data received');
       }
 
-      console.log('Holdings fetched:', holdings);
+      // console.log('Holdings fetched:', holdings);
       setHoldings(holdings);
     } catch (err) {
       console.error('Failed to fetch holdings:', err);

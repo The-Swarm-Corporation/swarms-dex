@@ -278,17 +278,17 @@ export async function GET(req: Request) {
       ...agentHoldings
     ]
 
-    logger.info("Holdings fetched successfully", {
-      count: allHoldings.length,
-      currencies: allHoldings.filter(h => h.symbol === "SOL" || h.symbol === "SWARMS").length,
-      agents: allHoldings.filter(h => h.symbol !== "SOL" && h.symbol !== "SWARMS").length,
-      holdings: allHoldings.map(h => ({
-        symbol: h.symbol,
-        balance: h.balance,
-        value: h.value,
-        mint: h.mintAddress
-      }))
-    })
+    // logger.info("Holdings fetched successfully", {
+    //   count: allHoldings.length,
+    //   currencies: allHoldings.filter(h => h.symbol === "SOL" || h.symbol === "SWARMS").length,
+    //   agents: allHoldings.filter(h => h.symbol !== "SOL" && h.symbol !== "SWARMS").length,
+    //   holdings: allHoldings.map(h => ({
+    //     symbol: h.symbol,
+    //     balance: h.balance,
+    //     value: h.value,
+    //     mint: h.mintAddress
+    //   }))
+    // })
 
     return NextResponse.json(allHoldings)
   } catch (error) {
