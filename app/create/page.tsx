@@ -13,7 +13,18 @@ import { AlertCircle, ImageIcon, Loader2 } from "lucide-react"
 import { logActivity } from "@/lib/supabase/logging"
 import { useAuth } from "@/components/providers/auth-provider"
 import { useRouter } from "next/navigation"
-import { Transaction } from "@solana/web3.js"
+import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, getAccount, createTransferInstruction, getOrCreateAssociatedTokenAccount } from "@solana/spl-token"
+import { PublicKey, Transaction } from "@solana/web3.js"
+import { signInWithWallet } from "@/lib/auth/wallet"
+import { signAndSendTransaction } from "@/lib/solana/transaction"
+import { BN } from "@project-serum/anchor"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useWallet } from '@solana/wallet-adapter-react'
 
 interface FormData {
@@ -46,11 +57,7 @@ interface FormError {
 
 const SWARMS_TOKEN_ADDRESS = process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS as string
 const SWARMS_PUMP_ADDRESS = process.env.NEXT_PUBLIC_SWARMS_PLATFORM_TEST_ADDRESS as string
-const SWARMS_TREASURY_ADDRESS = process.env.NEXT_PUBLIC_DAO_TREASURY_ADDRESS as string
-
 const SWARMS_MINIMUM_BUY_IN = 1
-
-
 export default function CreateAgent() {
   const router = useRouter()
   const { user, loading: authLoading } = useAuth()
@@ -249,8 +256,7 @@ export default function CreateAgent() {
         twitterHandle: formData.twitter || null,
         telegramGroup: formData.telegram || null,
         discordServer: formData.discord || null,
-        swarmsAmount: formData.swarmsAmount,
-        treasuryAddress: SWARMS_TREASURY_ADDRESS
+        swarmsAmount: formData.swarmsAmount
       }))
 
       // Get token creation transaction
@@ -296,13 +302,13 @@ export default function CreateAgent() {
                   const tokenTx = Transaction.from(Buffer.from(tokenCreationTx, 'base64'));
                   
                   // Log signature verification
-                  // console.log('Transaction signers before user:', {
-                  //   feePayer: tokenTx.feePayer?.toBase58(),
-                  //   signatures: tokenTx.signatures.map(s => ({
-                  //     publicKey: s.publicKey.toBase58(),
-                  //     signature: s.signature ? 'signed' : 'unsigned'
-                  //   }))
-                  // });
+                  console.log('Transaction signers before user:', {
+                    feePayer: tokenTx.feePayer?.toBase58(),
+                    signatures: tokenTx.signatures.map(s => ({
+                      publicKey: s.publicKey.toBase58(),
+                      signature: s.signature ? 'signed' : 'unsigned'
+                    }))
+                  });
 
                   try {
                     // Sign with the user's wallet using wallet adapter
@@ -732,4 +738,3 @@ export default function CreateAgent() {
       </div>
   )
 }
-
