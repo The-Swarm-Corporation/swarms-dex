@@ -58,6 +58,7 @@ interface FormError {
 const SWARMS_TOKEN_ADDRESS = process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS as string
 const SWARMS_PUMP_ADDRESS = process.env.NEXT_PUBLIC_SWARMS_PLATFORM_TEST_ADDRESS as string
 const SWARMS_MINIMUM_BUY_IN = 1
+const MIN_SOL_REQUIREMENT = 0.075 // Increased to 0.075 SOL to ensure sufficient balance
 export default function CreateAgent() {
   const router = useRouter()
   const { user, loading: authLoading } = useAuth()
@@ -241,8 +242,23 @@ export default function CreateAgent() {
       console.log("Balances:", { sol, swarms })
 
       // Verify minimum SOL
-      if (sol < 0.05) {
-        throw new Error(`Insufficient SOL balance. You need at least 0.05 SOL (current: ${sol.toFixed(4)} SOL)`)
+      if (sol < MIN_SOL_REQUIREMENT) {
+        toast.error(
+          <div className="space-y-2">
+            <div>Insufficient SOL Balance</div>
+            <div className="text-sm">
+              <div>Required: {MIN_SOL_REQUIREMENT} SOL</div>
+              <div>Current: {sol.toFixed(4)} SOL</div>
+              <div>Missing: {(MIN_SOL_REQUIREMENT - sol).toFixed(4)} SOL</div>
+            </div>
+            <div className="text-xs text-gray-400 mt-1">
+              Please add more SOL to your wallet to cover transaction fees and account creation costs.
+            </div>
+          </div>,
+          { duration: 6000 }
+        )
+        setIsLoading(false)
+        return
       }
 
       // Call the mint-token API with form data and image
@@ -521,7 +537,7 @@ export default function CreateAgent() {
             <h3 className="text-sm font-semibold text-red-500">Requirements</h3>
             <ul className="mt-2 text-sm text-gray-200 space-y-1">
               <li>• Minimum {SWARMS_MINIMUM_BUY_IN.toLocaleString()} SWARMS tokens required</li>
-              <li>• Minimum 0.05 SOL for transaction fees</li>
+              <li>• Minimum {MIN_SOL_REQUIREMENT} SOL for transaction fees and account creation</li>
               <li>• Connected Phantom wallet</li>
             </ul>
             <p className="mt-4 text-sm text-gray-200">
