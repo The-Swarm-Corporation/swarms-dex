@@ -166,7 +166,7 @@ async function simulatePoolCreationCost(
     baseAmount,
     quoteAmount,
     {
-      tradeFeeNumerator: new BN(30),
+      tradeFeeNumerator: 0,
       activationType: 0,
       activationPoint: null,
       hasAlphaVault: false,
