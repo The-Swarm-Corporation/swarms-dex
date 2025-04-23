@@ -1,16 +1,6 @@
-// Web3.js imports
-import { 
-  Connection, 
-  PublicKey, 
-  LAMPORTS_PER_SOL, 
-  Transaction, 
-  SystemProgram, 
-  Keypair, 
-  SYSVAR_INSTRUCTIONS_PUBKEY, 
-  ComputeBudgetProgram 
-} from "@solana/web3.js";
-
-// SPL Token imports
+import { Connection, PublicKey, LAMPORTS_PER_SOL, Transaction, SystemProgram, Keypair, TransactionInstruction, SYSVAR_RENT_PUBKEY, SYSVAR_INSTRUCTIONS_PUBKEY, ComputeBudgetProgram } from "@solana/web3.js";
+import { createClient } from "@supabase/supabase-js";
+import { logger } from "@/lib/logger";
 import { 
   getAssociatedTokenAddress, 
   createTransferInstruction, 
@@ -20,37 +10,21 @@ import {
   createAssociatedTokenAccountInstruction,
   createMintToInstruction,
 } from "@solana/spl-token";
-
-// Metaplex imports
-import { 
-  generateSigner, 
-  percentAmount, 
-  publicKey, 
-  keypairIdentity 
-} from '@metaplex-foundation/umi';
-import { 
-  createV1, 
-  TokenStandard 
-} from '@metaplex-foundation/mpl-token-metadata';
-import { 
-  createUmi 
-} from '@metaplex-foundation/umi-bundle-defaults';
-import { 
-  toWeb3JsInstruction 
-} from '@metaplex-foundation/umi-web3js-adapters';
-import { 
-  mplTokenMetadata 
-} from '@metaplex-foundation/mpl-token-metadata';
-
-// Other imports
-import { createClient } from "@supabase/supabase-js";
 import { PinataSDK } from 'pinata-web3';
+import { generateSigner, percentAmount, publicKey, keypairIdentity } from '@metaplex-foundation/umi';
+import { createV1, TokenStandard } from '@metaplex-foundation/mpl-token-metadata';
+import { createUmi } from '@metaplex-foundation/umi-bundle-defaults';
+import { toWeb3JsInstruction } from '@metaplex-foundation/umi-web3js-adapters';
+import { mplTokenMetadata } from '@metaplex-foundation/mpl-token-metadata';
+import { encrypt } from '@/lib/crypto';
 import { BN } from '@project-serum/anchor';
 import { AmmImpl } from "@mercurial-finance/dynamic-amm-sdk";
 
-// Local imports
-import { logger } from "@/lib/logger";
-import { encrypt } from '@/lib/crypto';
+// Debug prints for environment variables
+console.log('ENV CHECK:');
+console.log('DAO_TREASURY:', process.env.NEXT_PUBLIC_DAO_TREASURY_ADDRESS);
+console.log('SWARMS_PUMP:', process.env.NEXT_PUBLIC_SWARMS_PUMP_ADDRESS);
+console.log('SWARMS_TOKEN:', process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS);
 
 const RPC_URL = process.env.RPC_URL as string;
 
@@ -166,7 +140,7 @@ async function simulatePoolCreationCost(
     baseAmount,
     quoteAmount,
     {
-      tradeFeeNumerator: 0,
+      tradeFeeNumerator: 30,
       activationType: 0,
       activationPoint: null,
       hasAlphaVault: false,
@@ -355,28 +329,10 @@ export async function POST(req: Request) {
 
     // Calculate SWARMS amounts
     const totalAmount = BigInt(swarmsAmount) * BigInt(10 ** TOKEN_DECIMALS);
-    const treasuryFeeAmount = totalAmount * BigInt(1) / BigInt(100); // 1% fee to treasury
-    const reserveAmount = totalAmount - treasuryFeeAmount; // Remaining SWARMS go to bonding curve
+    const reserveAmount = totalAmount; // All SWARMS go to bonding curve initially
 
-    // Get treasury ATA
-    const treasuryTokenATA = await getAssociatedTokenAddress(
-      SWARMS_TOKEN_ADDRESS,
-      new PublicKey(data.treasuryAddress),
-      true
-    );
-
-    // Add treasury fee transfer
-    transaction.add(
-      createTransferInstruction(
-        userSwarmsATA,
-        treasuryTokenATA,
-        userPubkey,
-        Number(treasuryFeeAmount)
-      )
-    );
-
-    // Calculate creator's initial token allocation based on remaining SWARMS amount
-    const creatorTokens = calculateTokenAmount(Number(reserveAmount) / (10 ** TOKEN_DECIMALS));
+    // Calculate creator's initial token allocation based on SWARMS amount
+    const creatorTokens = calculateTokenAmount(Number(swarmsAmount));
     console.log('Token allocation calculation:', {
       swarmsAmount,
       creatorTokens,
