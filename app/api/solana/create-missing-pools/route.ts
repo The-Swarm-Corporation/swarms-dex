@@ -92,7 +92,7 @@ export async function POST(req: Request) {
           baseAmount,
           quoteAmount,
           {
-            tradeFeeNumerator: new BN(30),
+            tradeFeeNumerator: 30,
             activationType: 0,
             activationPoint: null,
             hasAlphaVault: false,
