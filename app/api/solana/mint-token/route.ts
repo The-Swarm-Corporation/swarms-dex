@@ -20,12 +20,6 @@ import { encrypt } from '@/lib/crypto';
 import { BN } from '@project-serum/anchor';
 import { AmmImpl } from "@mercurial-finance/dynamic-amm-sdk";
 
-// Debug prints for environment variables
-console.log('ENV CHECK:');
-console.log('DAO_TREASURY:', process.env.NEXT_PUBLIC_DAO_TREASURY_ADDRESS);
-console.log('SWARMS_PUMP:', process.env.NEXT_PUBLIC_SWARMS_PUMP_ADDRESS);
-console.log('SWARMS_TOKEN:', process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS);
-
 const RPC_URL = process.env.RPC_URL as string;
 
 // Create all PublicKeys
@@ -33,13 +27,11 @@ let DAO_TREASURY_ADDRESS: PublicKey;
 let SWARMS_PUMP_ADDRESS: PublicKey;
 let SWARMS_TOKEN_ADDRESS: PublicKey;
 
-console.log('Creating DAO Treasury PublicKey...');
 try {
   if (!process.env.NEXT_PUBLIC_DAO_TREASURY_ADDRESS) {
     throw new Error('DAO_TREASURY_ADDRESS is undefined');
   }
   DAO_TREASURY_ADDRESS = new PublicKey(process.env.NEXT_PUBLIC_DAO_TREASURY_ADDRESS);
-  console.log('DAO Treasury created:', DAO_TREASURY_ADDRESS.toString());
 } catch (error) {
   console.error('DAO Treasury failed:', error);
   console.error('Value was:', process.env.NEXT_PUBLIC_DAO_TREASURY_ADDRESS);
@@ -63,13 +55,11 @@ const pinata = new PinataSDK({
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } });
 
-console.log('Creating SWARMS Pump PublicKey...');
 try {
   if (!process.env.NEXT_PUBLIC_SWARMS_PLATFORM_TEST_ADDRESS) {
     throw new Error('SWARMS_PUMP_ADDRESS is undefined');
   }
   SWARMS_PUMP_ADDRESS = new PublicKey(process.env.NEXT_PUBLIC_SWARMS_PLATFORM_TEST_ADDRESS);
-  console.log('SWARMS Pump created:', SWARMS_PUMP_ADDRESS.toString());
 } catch (error) {
   console.error('SWARMS Pump failed:', error);
   console.error('Value was:', process.env.NEXT_PUBLIC_SWARMS_PLATFORM_TEST_ADDRESS);
@@ -82,15 +72,12 @@ const INITIAL_VIRTUAL_SWARMS = 500; // 500 SWARMS virtual reserve
 const VIRTUAL_TOKEN_SUPPLY = 1_073_000_191; // Virtual supply used for calculations
 // Original K value from PUMP.FUN scaled up by (500/30) to maintain same price dynamics
 const K_VALUE = 32_190_005_730 * (500/30); // Scale k value for 500 SWARMS instead of 30 SOL
-const POOL_CREATION_SOL = 0.07; // Fixed amount for pool creation
 
-console.log('Creating SWARMS Token PublicKey...');
 try {
   if (!process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS) {
     throw new Error('SWARMS_TOKEN_ADDRESS is undefined');
   }
   SWARMS_TOKEN_ADDRESS = new PublicKey(process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS);
-  console.log('SWARMS Token created:', SWARMS_TOKEN_ADDRESS.toString());
 } catch (error) {
   console.error('SWARMS Token failed:', error);
   console.error('Value was:', process.env.NEXT_PUBLIC_SWARMS_TOKEN_ADDRESS);
@@ -207,13 +194,6 @@ async function calculateRequiredSol(
     poolCreationCost       // Pool creation cost (includes its own buffer)
   ) / LAMPORTS_PER_SOL;
 
-  console.log('Cost breakdown:', {
-    accountRent: accountRentExempt / LAMPORTS_PER_SOL,
-    mintRent: mintRentExempt / LAMPORTS_PER_SOL,
-    ataRent: (ataRentExempt * 2) / LAMPORTS_PER_SOL,
-    poolCreation: poolCreationCost,
-    total: totalCost
-  });
 
   return totalCost;
 }
@@ -255,11 +235,9 @@ export async function POST(req: Request) {
     
     // Generate mint keypair
     const mintKeypair = Keypair.generate();
-    console.log('Generated mint keypair:', mintKeypair.publicKey.toString());
 
     // Generate bonding curve keypair
     const bondingCurveKeypair = Keypair.generate();
-    console.log('Generated bonding curve keypair:', bondingCurveKeypair.publicKey.toString());
 
     // Set the fee payer explicitly
     transaction.feePayer = userPubkey;
@@ -289,14 +267,13 @@ export async function POST(req: Request) {
 
     // Calculate exact required SOL amount
     const bondingCurveRentExempt = await connection.getMinimumBalanceForRentExemption(0);
-    const initialSolAmount = POOL_CREATION_SOL * LAMPORTS_PER_SOL;
     
     transaction.add(
       SystemProgram.createAccount({
         fromPubkey: userPubkey,
         newAccountPubkey: bondingCurveKeypair.publicKey,
         space: 0,  // No data needed for a wallet account
-        lamports: bondingCurveRentExempt + initialSolAmount, // Add 0.12 SOL for pool creation
+        lamports: bondingCurveRentExempt, // Only require rent exemption
         programId: SystemProgram.programId  // Make it a system account
       })
     );
@@ -333,13 +310,6 @@ export async function POST(req: Request) {
 
     // Calculate creator's initial token allocation based on SWARMS amount
     const creatorTokens = calculateTokenAmount(Number(swarmsAmount));
-    console.log('Token allocation calculation:', {
-      swarmsAmount,
-      creatorTokens,
-      initialSupply: INITIAL_SUPPLY,
-      initialTokenSupply: VIRTUAL_TOKEN_SUPPLY
-    });
-
     // Convert to BigInt with decimals and ensure we don't exceed total supply
     const creatorAllocation = BigInt(Math.floor(creatorTokens)) * BigInt(10 ** TOKEN_DECIMALS);
     const totalSupplyWithDecimals = BigInt(INITIAL_SUPPLY) * BigInt(10 ** TOKEN_DECIMALS);
@@ -347,11 +317,6 @@ export async function POST(req: Request) {
     // Ensure bonding curve gets remaining supply
     const bondingCurveAllocation = totalSupplyWithDecimals - creatorAllocation;
 
-    console.log('Final allocations:', {
-      creatorAllocation: creatorAllocation.toString(),
-      bondingCurveAllocation: bondingCurveAllocation.toString(),
-      totalSupply: totalSupplyWithDecimals.toString()
-    });
 
     // Verify allocations add up to total supply
     if (creatorAllocation + bondingCurveAllocation !== totalSupplyWithDecimals) {
@@ -409,7 +374,6 @@ export async function POST(req: Request) {
     );
 
     // 6. Create metadata
-    console.log('Adding metadata instruction...');
     const umi = createUmi(RPC_URL)
       .use(mplTokenMetadata())
       
@@ -418,15 +382,6 @@ export async function POST(req: Request) {
     mintUmiKeypair.publicKey = publicKey(mintKeypair.publicKey.toBase58());
     umi.use(keypairIdentity(mintUmiKeypair));
 
-    // Create metadata instruction
-    console.log('Adding metadata instruction...', {
-      mint: mintKeypair.publicKey.toBase58(),
-      authority: mintKeypair.publicKey.toBase58(),
-      payer: userPublicKey,
-      name: tokenName,
-      symbol: tickerSymbol,
-      uri: imageUrl
-    });
 
     const metadataBuilder = createV1(umi, {
       mint: publicKey(mintKeypair.publicKey.toBase58()),
@@ -461,7 +416,6 @@ export async function POST(req: Request) {
     metadataInstructions.forEach(ix => {
       transaction.add(toWeb3JsInstruction(ix));
     });
-    console.log("Added metadata")
 
     // Add compute budget instructions
     const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }); // Fixed compute limit
@@ -529,17 +483,8 @@ export async function PUT(req: Request) {
     // Send and confirm transaction - user has signed their part client-side
     const tx = Transaction.from(Buffer.from(signedTokenTx, 'base64'));
 
-    console.log('Sending transaction with details:', {
-      signers: tx.signatures.map(s => ({
-        publicKey: s.publicKey.toString(),
-        signature: s.signature ? 'signed' : 'unsigned'
-      })),
-      blockhash: tx.recentBlockhash,
-      lastValidBlockHeight: tx.lastValidBlockHeight
-    });
 
     // Simulate transaction first
-    console.log('Simulating transaction...');
     const simulation = await connection.simulateTransaction(tx);
     
     if (simulation.value.err) {
@@ -550,10 +495,6 @@ export async function PUT(req: Request) {
       throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}\nLogs: ${simulation.value.logs?.join('\n')}`);
     }
 
-    console.log('Simulation successful:', {
-      unitsConsumed: simulation.value.unitsConsumed,
-      logs: simulation.value.logs
-    });
 
     // Send with retries
     let signature;
@@ -564,12 +505,10 @@ export async function PUT(req: Request) {
           preflightCommitment: 'confirmed',
           maxRetries: 5
         });
-        console.log(`Attempt ${i + 1} successful, signature:`, signature);
         break;
       } catch (error) {
         console.error(`Send attempt ${i + 1} failed:`, error);
         if (i === 2) throw error;
-        console.log('Retrying in 2 seconds...');
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
@@ -578,10 +517,6 @@ export async function PUT(req: Request) {
       throw new Error('Failed to send transaction after retries');
     }
 
-    console.log('Transaction sent:', signature);
-
-    // Confirm with longer timeout and more retries
-    console.log('Waiting for confirmation...');
     let confirmed = false;
     let totalWaitTime = 0;
     const MAX_WAIT_TIME = 600000; // 10 minutes total max wait
@@ -596,28 +531,16 @@ export async function PUT(req: Request) {
           lastValidBlockHeight: tx.lastValidBlockHeight!
         }, 'confirmed');
 
-        console.log('Confirmation attempt result:', {
-          err: confirmation.value.err,
-          slot: confirmation.context.slot
-        });
-
         if (!confirmation.value.err) {
           confirmed = true;
           break;
         }
       } catch (error) {
         // On any error, check transaction status directly
-        console.log('Checking transaction status directly...');
         const status = await connection.getSignatureStatus(signature);
-        
-        console.log('Transaction status:', {
-          status: status.value?.confirmationStatus,
-          err: status.value?.err,
-          confirmations: status.value?.confirmations
-        });
+
 
         if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
-          console.log('Transaction confirmed through status check');
           confirmed = true;
           break;
         }
@@ -630,17 +553,14 @@ export async function PUT(req: Request) {
       // Wait before next check
       await new Promise(resolve => setTimeout(resolve, RETRY_INTERVAL));
       totalWaitTime += RETRY_INTERVAL;
-      console.log(`Waited ${totalWaitTime/1000} seconds for confirmation...`);
     }
 
     if (!confirmed) {
       // One final status check before giving up
       const finalStatus = await connection.getSignatureStatus(signature);
       if (finalStatus.value?.confirmationStatus === 'confirmed' || finalStatus.value?.confirmationStatus === 'finalized') {
-        console.log('Transaction confirmed in final status check');
         confirmed = true;
       } else {
-        console.error('Final transaction status:', finalStatus);
         throw new Error(`Transaction confirmation timed out after ${MAX_WAIT_TIME/1000} seconds. Check status manually with signature: ${signature}`);
       }
     }
@@ -695,7 +615,6 @@ export async function PUT(req: Request) {
     }), { status: 200 });
 
   } catch (error) {
-    console.error('Error processing transaction:', error);
     return new Response(JSON.stringify({ 
       error: error instanceof Error ? error.message : "Failed to process transaction" 
     }), { status: 500 });
