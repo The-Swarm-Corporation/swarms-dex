@@ -15,7 +15,7 @@ export const METEORA = {
   VAULT_SEED: "vault",
   FEE_OWNER: FEE_OWNER,
   // Standard fees (can be adjusted per pool)
-  DEFAULT_TRADE_FEE_BPS: 0, // 0.25%
+  DEFAULT_TRADE_FEE_BPS: 25, // 0.25%
   OWNER_TRADE_FEE_BPS: 0, // 0.05%
   OWNER_WITHDRAW_FEE_BPS: 0, // 0%
 }
