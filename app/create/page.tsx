@@ -239,7 +239,6 @@ export default function CreateAgent() {
       }
 
       const { sol, swarms } = await balanceResponse.json()
-      console.log("Balances:", { sol, swarms })
 
       // Verify minimum SOL
       if (sol < MIN_SOL_REQUIREMENT) {
@@ -316,15 +315,6 @@ export default function CreateAgent() {
 
                   // Sign token creation transaction
                   const tokenTx = Transaction.from(Buffer.from(tokenCreationTx, 'base64'));
-                  
-                  // Log signature verification
-                  console.log('Transaction signers before user:', {
-                    feePayer: tokenTx.feePayer?.toBase58(),
-                    signatures: tokenTx.signatures.map(s => ({
-                      publicKey: s.publicKey.toBase58(),
-                      signature: s.signature ? 'signed' : 'unsigned'
-                    }))
-                  });
 
                   try {
                     // Sign with the user's wallet using wallet adapter
