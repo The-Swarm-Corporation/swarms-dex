@@ -298,7 +298,7 @@ export async function createTokenAndMint(
           mintKeypair.publicKey,
           userTokenAccount.address,
           new PublicKey(wallet.publicKey.toString()),
-          mintAmount,
+          BigInt(mintAmount.toString()),
           [],
           TOKEN_PROGRAM_ID
         )

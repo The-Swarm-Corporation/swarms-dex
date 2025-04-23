@@ -172,9 +172,9 @@ export async function createPoolInstruction({
         0x1, // Instruction index for create pool
         ...new BN(initialLiquidityA.toString()).toArray("le", 8),
         ...new BN(initialLiquidityB.toString()).toArray("le", 8),
-        ...new BN(METEORA.DEFAULT_TRADE_FEE_BPS).toArray("le", 2),
-        ...new BN(METEORA.OWNER_TRADE_FEE_BPS).toArray("le", 2),
-        ...new BN(METEORA.OWNER_WITHDRAW_FEE_BPS).toArray("le", 2),
+        ...new BN(METEORA.DEFAULT_TRADE_FEE_BPS).toArray("le", 1),
+        ...new BN(METEORA.OWNER_TRADE_FEE_BPS).toArray("le", 1),
+        ...new BN(METEORA.OWNER_WITHDRAW_FEE_BPS).toArray("le", 1),
       ]),
     })
 

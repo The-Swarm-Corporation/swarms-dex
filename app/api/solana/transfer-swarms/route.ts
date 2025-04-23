@@ -53,20 +53,6 @@ function calculateTokenAmount(currentSwarmsReserve: number, additionalSwarms: nu
   // Scale down to actual supply and ensure non-negative
   const scaledTokens = Math.max(0, (virtualTokensToReceive / VIRTUAL_TOKEN_SUPPLY) * INITIAL_SUPPLY)
   
-  console.log('Token calculation details:', {
-    currentReserve: currentSwarmsReserve,
-    additionalAmount: additionalSwarms,
-    totalAfter: totalSwarmsAfter,
-    currentVirtualSwarms,
-    totalVirtualSwarms,
-    currentVirtualTokens,
-    newVirtualTokens,
-    virtualTokensToReceive,
-    scaledTokens,
-    k: K_VALUE,
-    priceImpact: (newVirtualTokens - currentVirtualTokens) / currentVirtualTokens * 100
-  })
-  
   return scaledTokens
 }
 
@@ -85,9 +71,6 @@ export async function POST(req: Request) {
     const userPublicKey = new PublicKey(walletAddress)
     const fromTokenAccount = new PublicKey(fromAccount)
     const toTokenAccount = new PublicKey(toAccount)
-
-    // Check if destination is a bonding curve account
-    console.log('Looking up bonding curve:', { toAccount })
     
     // First get the mint address from web3agents using bonding curve address
     const { data: agentData, error: agentError } = await supabase
@@ -97,7 +80,6 @@ export async function POST(req: Request) {
       .single()
 
     if (agentError || !agentData) {
-      console.log('Not a bonding curve account, proceeding with regular transfer')
       // Regular transfer code continues...
     } else {
       logger.info('Destination is a bonding curve account, creating deposit transaction', {
