@@ -57,11 +57,6 @@ export const metadata: Metadata = {
       'max-snippet': -1,
     },
   },
-  icons: {
-    icon: '/logo.svg',
-    shortcut: '/logo.svg',
-    apple: '/apple-touch-icon.png',
-  },
   manifest: '/site.webmanifest',
   openGraph: {
     type: 'website',
